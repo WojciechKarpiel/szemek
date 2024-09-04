@@ -21,7 +21,8 @@ enum Term:
   case PathType(tpe: Term, start: Term, end: Term)
   case PathAbstraction(abs: Interval => Term)
   case PathElimination(term: Term, arg: Interval)
-
+  // Univ
+  case Universe
 
 enum Interval:
   case Zero
@@ -73,35 +74,87 @@ object TypeChecking {
 
 
   }
-  def whfNormalize(term: Term, context: Context): Term = term match
-    case Term.Lambda(argType, abs) => ???
-    case Term.PiType(argType, abs) => ???
-    case Term.Application(fun, arg) => ???
-    case Term.Pair(fst, snd) => ???
-    case Term.SigmaType(argType, abs) => ???
-    case Term.Fst(pair) => ???
-    case Term.Snd(pair) => ???
-    case Term.NatZero => NatZero
-    case Term.Suc(n) => Suc(n)
+
+  private def checkPiInference(term: PiType, context:Context):Unit =
+    ensureType(term.argType,context)
+    ensureType(term.abs.apply(term.argType),context)
+
+//  private def inferLambdaType(lambda: Term.Lambda, context: Context): PiType = lambda match {
+//    case Lambda(argType, abs) =>
+//      PiType(argType, arg => abs(arg))
+//  }
+
+   def ensureIsOfType(term_ : Term, tpe_ : Term, context: Context):Unit = {
+    val term = applyRewriteRules(term_, context)
+    val  tpe = applyRewriteRules(tpe_, context)
+    term match
+      case  Lambda(argTL,bdy) =>
+        tpe match
+          case PiType(argTP, tpeB) =>
+            if argTL != argTP then throw new TypeCheckFailedException()
+            ensureIsOfType(bdy(argTL), tpeB(argTP), context)
+          case _ => throw new TypeCheckFailedException()
+      case Suc(n) => // todo typecheck expensive?
+        if tpe != NatType then throw new TypeCheckFailedException()
+        ensureIsOfType(n, NatType, context)
+      case NatZero =>
+        if tpe != NatType then throw new TypeCheckFailedException()
+      case NatType =>
+        if tpe != Universe then throw new TypeCheckFailedException()
+      case _ => ???
+  }
+
+  def applyRewriteRules(term: Term, context: Context): Term = term match
     case Term.NatRecursion() => ???
-    case Term.NatType => NatType
-    case pTpe@PathType(tpe, start, end) => pTpe
-    case Term.PathAbstraction(abs) => ???
+    case Term.Application(fun, arg) =>
+      // 1. Check that fun is A -> B
+      applyRewriteRules(fun,context) match
+         case Term.Lambda(argType, abs) =>
+           ensureType(argType, context) // this replaces check that l is of Pi type
+           // 2. Check that arg is A
+           ensureIsOfType(arg, argType, context)
+           applyRewriteRules(abs.apply(arg), context)
+         case fNorm => Application(fNorm, arg)
+
     case PathElimination(eliminated, arg) =>
-      whfNormalize(eliminated, context) match {
+      applyRewriteRules(eliminated, context) match {
         case elNorm@PathType(tpe, start, end) =>
           ensureTypeNoNormalisation(start, tpe, context)
           ensureTypeNoNormalisation(end, tpe, context)
           arg.normalize match {
-            case Interval.Zero => whfNormalize(start, context)
-            case Interval.One => whfNormalize(end, context)
+            case Interval.Zero => applyRewriteRules(start, context)
+            case Interval.One => applyRewriteRules(end, context)
             case _ => PathElimination(elNorm, arg)
           }
         case elNorm => PathElimination(elNorm, arg)
       }
+    case f: Term.Fst => ???
+    case s: Term.Snd => ???
 
-  def typecheck(term: Term, context: Context): Unit = term match {
-    case Term.Lambda(argType, abs) => ???
+      // Rest is already normal
+    case l: Term.Lambda => l
+    case pi: Term.PiType => pi
+    case p: Term.Pair => p
+    case s: Term.SigmaType => s
+    case Term.NatZero => NatZero
+    case s: Term.Suc => s
+    case Term.NatType => NatType
+    case pTpe: PathType => pTpe
+    case pa: Term.PathAbstraction => pa
+
+
+  private def ensureType(term: Term, context: Context):Unit =
+   applyRewriteRules(term,context) match {
+    case Term.PiType(_, _) => ()
+    case Term.SigmaType(_, _) => ()
+    case Term.NatType => ()
+    case Term.PathType(_, _, _) => () /// TODO is path OK here?
+    case _ => throw TypeCheckFailedException()
+  }
+  def validTerm(term: Term, context: Context): Unit = term match {
+    case Term.Lambda(argType, abs) => // TODO normalize?
+        ensureType(argType, context)
+
     case Term.PiType(argType, abs) => ???
     case Term.Application(fun, arg) => ???
     case Term.Pair(fst, snd) => ???
