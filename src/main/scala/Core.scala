@@ -1,6 +1,7 @@
 package pl.wojciechkarpiel.szemek
 
-import TypeChecking.ensureTypeNoNormalisation
+
+final case class Id(value: String) extends AnyVal
 
 enum Term:
   // Pi type
@@ -23,6 +24,9 @@ enum Term:
   case PathElimination(term: Term, arg: Interval)
   // Univ
   case Universe
+  // Varia
+  case GlobalVar(id: Id)
+  case PhantomVarOfType(tpe: Term)
 
 enum Interval:
   case Zero
@@ -58,119 +62,95 @@ extension (i: Interval)
 
 class TypeCheckFailedException() extends RuntimeException() /*with NoStackTrace*/
 
-class Context
-object Context{
-  val Empty : Context = Context()
+class Context private(map: Map[Id, TypedTerm]) {
+  def add(id: Id, term: TypedTerm): Context = new Context(map + (id -> term))
+
+  def get(id: Id): Option[TypedTerm] = map.get(id)
+
+  def isEmpty: Boolean = map.isEmpty
+
+  def contains(id: Id): Boolean = map.contains(id)
 }
 
+object Context {
+  val Empty: Context = new Context(Map())
+}
+
+final case class ContextTerm(term: Term, ctx: Context)
+
+final case class Inference(preconditions: Seq[ContextTerm], result: ContextTerm)
+
+final case class EqJudgement(rewriteFrom: Term, rewriteTo: Term, tpe: Term)
+
+final case class TypedTerm(term: Term, tpe: Term)
 
 object TypeChecking {
 
   import Term.*
 
-  def ensureTypeNoNormalisation(term: Term, tpe: Term, context: Context): Unit = { // TODO
-    // hack for basic unit testing
-    if tpe == NatType && (term != NatZero && term != Suc(NatZero)) then throw TypeCheckFailedException()
+  //Well-formed contexts
+  def validContext(ctx: Context): Boolean = true
+
+  // Well-formed types
+
+  //  def natTypeInference(ctx: Context):Inference = Inference(Seq(), ContextTerm(NatType, ctx))
 
 
-  }
-
-  private def checkPiInference(term: PiType, context:Context):Unit =
-    ensureType(term.argType,context)
-    ensureType(term.abs.apply(term.argType),context)
-
-//  private def inferLambdaType(lambda: Term.Lambda, context: Context): PiType = lambda match {
-//    case Lambda(argType, abs) =>
-//      PiType(argType, arg => abs(arg))
-//  }
-
-   def ensureIsOfType(term_ : Term, tpe_ : Term, context: Context):Unit = {
-    val term = applyRewriteRules(term_, context)
-    val  tpe = applyRewriteRules(tpe_, context)
+  def rewriteRule(term: Term, ctx: Context): Term = {
     term match
-      case  Lambda(argTL,bdy) =>
-        tpe match
-          case PiType(argTP, tpeB) =>
-            if argTL != argTP then throw new TypeCheckFailedException()
-            ensureIsOfType(bdy(argTL), tpeB(argTP), context)
-          case _ => throw new TypeCheckFailedException()
-      case Suc(n) => // todo typecheck expensive?
-        if tpe != NatType then throw new TypeCheckFailedException()
-        ensureIsOfType(n, NatType, context)
-      case NatZero =>
-        if tpe != NatType then throw new TypeCheckFailedException()
-      case NatType =>
-        if tpe != Universe then throw new TypeCheckFailedException()
-      case _ => ???
+      case app@Term.Application(fun, arg) =>
+        rewriteRule(fun, ctx) match
+          case Term.Lambda(argType, abs) =>
+            // this is supposed to check many things about the lbda
+            // TODO: add test which make this check necessary
+            if !inferType(fun, ctx).isInstanceOf[PiType] then throw new TypeCheckFailedException()
+            if inferType(arg, ctx) == argType then abs(arg) else throw new TypeCheckFailedException()
+          case _ => app
+      case Term.PathElimination(term, arg) => ???
+      case proj@Term.Fst(pair) =>
+        rewriteRule(pair, ctx) match
+          case Term.Pair(fst, _) =>
+            if inferType(pair, ctx).isInstanceOf[Pair] then fst else throw new TypeCheckFailedException()
+          case _ => proj
+      case proj@Term.Snd(pair) =>
+        rewriteRule(pair, ctx) match
+          case Term.Pair(_, snd) =>
+            if inferType(pair, ctx).isInstanceOf[Pair] then snd else throw new TypeCheckFailedException()
+          case _ => proj
+      case Term.NatRecursion() => ???
+      case notRewritable => notRewritable
   }
 
-  def applyRewriteRules(term: Term, context: Context): Term = term match
-    case Term.NatRecursion() => ???
-    case Term.Application(fun, arg) =>
-      // 1. Check that fun is A -> B
-      applyRewriteRules(fun,context) match
-         case Term.Lambda(argType, abs) =>
-           ensureType(argType, context) // this replaces check that l is of Pi type
-           // 2. Check that arg is A
-           ensureIsOfType(arg, argType, context)
-           applyRewriteRules(abs.apply(arg), context)
-         case fNorm => Application(fNorm, arg)
 
-    case PathElimination(eliminated, arg) =>
-      applyRewriteRules(eliminated, context) match {
-        case elNorm@PathType(tpe, start, end) =>
-          ensureTypeNoNormalisation(start, tpe, context)
-          ensureTypeNoNormalisation(end, tpe, context)
-          arg.normalize match {
-            case Interval.Zero => applyRewriteRules(start, context)
-            case Interval.One => applyRewriteRules(end, context)
-            case _ => PathElimination(elNorm, arg)
-          }
-        case elNorm => PathElimination(elNorm, arg)
-      }
-    case f: Term.Fst => ???
-    case s: Term.Snd => ???
+  def inferType(term: Term, ctx: Context): Term = rewriteRule(term, ctx) match {
+    case PhantomVarOfType(tpe) => // todo need to check if tpe is tpe?
+      if inferType(tpe, ctx) == Universe then tpe else throw new TypeCheckFailedException()
+    case Term.Universe => Universe
+    case Term.GlobalVar(id) => ctx.get(id).map(_.tpe).getOrElse(throw new TypeCheckFailedException())
+    case Term.NatType => Universe
+    case Term.NatZero => NatType
+    case Term.Suc(n) =>
+      if inferType(n, ctx) == NatType then NatType
+      else throw new TypeCheckFailedException()
+    case Term.Lambda(argType, abs) =>
+      // 1. Check that the Arg type is legit
+      if inferType(argType, ctx) != Universe then throw new TypeCheckFailedException();
+      // 2. Check if body type exsits
+      val bodyType = inferType(abs(PhantomVarOfType(argType)), ctx)
+      if inferType(bodyType, ctx) != Universe then throw new TypeCheckFailedException();
+      PiType(argType, x => inferType(abs(x), ctx))
 
-      // Rest is already normal
-    case l: Term.Lambda => l
-    case pi: Term.PiType => pi
-    case p: Term.Pair => p
-    case s: Term.SigmaType => s
-    case Term.NatZero => NatZero
-    case s: Term.Suc => s
-    case Term.NatType => NatType
-    case pTpe: PathType => pTpe
-    case pa: Term.PathAbstraction => pa
-
-
-  private def ensureType(term: Term, context: Context):Unit =
-   applyRewriteRules(term,context) match {
-    case Term.PiType(_, _) => ()
-    case Term.SigmaType(_, _) => ()
-    case Term.NatType => ()
-    case Term.PathType(_, _, _) => () /// TODO is path OK here?
-    case _ => throw TypeCheckFailedException()
-  }
-  def validTerm(term: Term, context: Context): Unit = term match {
-    case Term.Lambda(argType, abs) => // TODO normalize?
-        ensureType(argType, context)
-
+    case Term.Pair(fst, snd) => // TODO similar to Lambda
+      ???
     case Term.PiType(argType, abs) => ???
-    case Term.Application(fun, arg) => ???
-    case Term.Pair(fst, snd) => ???
     case Term.SigmaType(argType, abs) => ???
+    case Term.PathType(tpe, start, end) => ???
+    case Term.PathAbstraction(abs) => ???
+    // has rewrite rules, but is not rewritable
+    case Term.Application(fun, arg) => ???
+    case Term.NatRecursion() => ???
+    case Term.PathElimination(term, arg) => ???
     case Term.Fst(pair) => ???
     case Term.Snd(pair) => ???
-    case Term.NatZero => ()
-    case Term.Suc(n) => ???
-    case Term.NatRecursion() => ???
-    case Term.NatType => ???
-    case Term.PathType(tpe, start, end) =>
-      //      ensureLegitType(tpe, context)
-      //      ensureType(start, tpe, context)
-      //      ensureType(end, tpe, context)
-      ???
-    case Term.PathAbstraction(abs) => ???
-    case Term.PathElimination(term, arg) => ???
   }
 }
