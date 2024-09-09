@@ -1,32 +1,60 @@
 package pl.wojciechkarpiel.szemek
 
+import Interval.{One, PhantomInterval, Zero}
+
 
 final case class Id(value: String) extends AnyVal
 
-enum Term:
+
+// TODO EQ and hashcode for the FN containing types
+sealed trait Term
+
+object Term:
+  trait BrokenEq {
+    override def hashCode(): Int = ???
+
+    override def equals(obj: Any): Boolean = ???
+  }
+
   // Pi type
-  case Lambda(argType: Term, abs: Term => Term)
-  case PiType(argType: Term, abs: Term => Term)
-  case Application(fun: Term, arg: Term)
+  final case class Lambda(argType: Term, abs: Term => Term) extends Term with BrokenEq
+
+  final case class PiType(argType: Term, abs: Term => Term) extends Term with BrokenEq
+
+  final case class Application(fun: Term, arg: Term) extends Term
+
   // Sigma type
-  case Pair(fst: Term, snd: Term)
-  case SigmaType(argType: Term, abs: Term => Term)
-  case Fst(pair: Term)
-  case Snd(pair: Term)
+  final case class PairIntro(fst: Term, snd: Term) extends Term
+
+  final case class PairType(fstTpe: Term, sndTpe: Term => Term) extends Term with BrokenEq
+
+  final case class Fst(pair: Term) extends Term
+
+  final case class Snd(pair: Term) extends Term
+
   // Natural numbers
-  case NatZero
-  case Suc(n: Term)
-  case NatRecursion() // TODO
-  case NatType
-  // Path
-  case PathType(tpe: Term, start: Term, end: Term)
-  case PathAbstraction(abs: Interval => Term)
-  case PathElimination(term: Term, arg: Interval)
-  // Univ
-  case Universe
-  // Varia
-  case GlobalVar(id: Id)
-  case PhantomVarOfType(tpe: Term)
+  object NatZero extends Term
+
+  final case class Suc(n: Term) extends Term
+
+  final case class NatRecursion() extends Term //todo
+
+  object NatType extends Term
+
+  // P class ath
+  final case class PathType(tpe: Interval => Term, start: Term, end: Term) extends Term with BrokenEq
+
+  final case class PathAbstraction(abs: Interval => Term) extends Term with BrokenEq
+
+  final case class PathElimination(term: Term, arg: Interval) extends Term
+
+  // U class niv
+  object Universe extends Term
+
+  // V class aria
+  final case class GlobalVar(id: Id) extends Term
+
+  final case class PhantomVarOfType(tpe: Term) extends Term
 
 enum Interval:
   case Zero
@@ -34,6 +62,7 @@ enum Interval:
   case Opp(i: Interval)
   case Min(i1: Interval, i2: Interval)
   case Max(i1: Interval, i2: Interval)
+  case PhantomInterval
 
 object Interval {
   def normalize(i: Interval): Interval = i match
@@ -55,6 +84,7 @@ object Interval {
         case _ => normalize(i2) match
           case One => One
           case _ => max
+    case PhantomInterval => PhantomInterval
 }
 
 extension (i: Interval)
@@ -106,16 +136,26 @@ object TypeChecking {
             if !inferType(fun, ctx).isInstanceOf[PiType] then throw new TypeCheckFailedException()
             if inferType(arg, ctx) == argType then abs(arg) else throw new TypeCheckFailedException()
           case _ => app
-      case Term.PathElimination(term, arg) => ???
+      case pe@Term.PathElimination(term, arg) =>
+        inferType(term, ctx) match
+          case pTpe@PathType(_, start, end) =>
+            inferType(pTpe, ctx) // in case it's ill-formed
+            Interval.normalize(arg) match
+              case Interval.Zero => rewriteRule(start, ctx)
+              case Interval.One => rewriteRule(end, ctx)
+              case inBetween => rewriteRule(term, ctx) match
+                case PathAbstraction(abs) => rewriteRule(abs(inBetween), ctx)
+                case _ => pe
+          case _ => throw new TypeCheckFailedException()
       case proj@Term.Fst(pair) =>
         rewriteRule(pair, ctx) match
-          case Term.Pair(fst, _) =>
-            if inferType(pair, ctx).isInstanceOf[Pair] then fst else throw new TypeCheckFailedException()
+          case Term.PairIntro(fst, _) =>
+            if inferType(pair, ctx).isInstanceOf[PairIntro] then fst else throw new TypeCheckFailedException()
           case _ => proj
       case proj@Term.Snd(pair) =>
         rewriteRule(pair, ctx) match
-          case Term.Pair(_, snd) =>
-            if inferType(pair, ctx).isInstanceOf[Pair] then snd else throw new TypeCheckFailedException()
+          case Term.PairIntro(_, snd) =>
+            if inferType(pair, ctx).isInstanceOf[PairIntro] then snd else throw new TypeCheckFailedException()
           case _ => proj
       case Term.NatRecursion() => ???
       case notRewritable => notRewritable
@@ -140,12 +180,26 @@ object TypeChecking {
       if inferType(bodyType, ctx) != Universe then throw new TypeCheckFailedException();
       PiType(argType, x => inferType(abs(x), ctx))
 
-    case Term.Pair(fst, snd) => // TODO similar to Lambda
-      ???
-    case Term.PiType(argType, abs) => ???
-    case Term.SigmaType(argType, abs) => ???
-    case Term.PathType(tpe, start, end) => ???
-    case Term.PathAbstraction(abs) => ???
+    case Term.PairType(fstTpe, sndTpe) =>
+      if inferType(fstTpe, ctx) != Universe then throw new TypeCheckFailedException()
+      if inferType(sndTpe(PhantomVarOfType(fstTpe)), ctx) != Universe then throw new TypeCheckFailedException()
+      Universe
+    case Term.PairIntro(fst, snd) => // TODO inexact!
+      val fstTpe = inferType(fst, ctx)
+      val sndTpe = inferType(snd, ctx)
+      PairType(fstTpe, _ => sndTpe)
+    case Term.PiType(argType, abs) =>
+      if inferType(argType, ctx) != Universe then throw new TypeCheckFailedException()
+      if inferType(abs(PhantomVarOfType(argType)), ctx) != Universe then throw new TypeCheckFailedException()
+      Universe
+    case Term.PathType(tpe, start, end) =>
+      if inferType(tpe(PhantomInterval), ctx) != Universe then throw new TypeCheckFailedException()
+      if inferType(rewriteRule(start, ctx), ctx) != rewriteRule(tpe(Zero), ctx) then throw new TypeCheckFailedException()
+      if inferType(rewriteRule(end, ctx), ctx) != rewriteRule(tpe(One), ctx) then throw new TypeCheckFailedException()
+      Universe
+    case Term.PathAbstraction(abs) =>
+      inferType(abs(PhantomInterval), ctx)
+      PathType(i => inferType(abs(i), ctx), abs(Zero), abs(One))
     // has rewrite rules, but is not rewritable
     case Term.Application(fun, arg) => ???
     case Term.NatRecursion() => ???
