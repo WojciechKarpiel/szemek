@@ -76,7 +76,10 @@ object Term:
 
   final case class Suc(n: Term) extends Term
 
-  final case class NatRecursion() extends Term //todo
+  // Todo this oversimplified
+  final case class NatRecursion(forZero: Term, forNext: Term => Term => Term) extends Term
+
+  final case class NatRecApply(natRec: Term, nat: Term) extends Term
 
   object NatType extends Term
 
@@ -231,7 +234,16 @@ object TypeChecking {
           case Term.PairIntro(_, snd) =>
             if inferType(pair, ctx).isInstanceOf[PairIntro] then snd else throw new TypeCheckFailedException()
           case _ => proj
-      case Term.NatRecursion() => ???
+      case Term.NatRecApply(natRec, nat) => {
+        val NatRecursion(inForZero, inForNext) = rewriteRule(natRec, ctx).asInstanceOf[NatRecursion]
+        // TODO nic nie sprawdza
+        rewriteRule(nat, ctx) match
+          case NatZero => inForZero
+          case Suc(n) => rewriteRule(inForNext(n)(rewriteRule(NatRecApply(natRec, n), ctx)), ctx)
+          case _ => throw new TypeCheckFailedException()
+
+
+      }
       case notRewritable => notRewritable
   }
 
@@ -274,6 +286,12 @@ object TypeChecking {
     case Term.PathAbstraction(abs) =>
       inferType(abs(PhantomInterval.Constant), ctx)
       PathType(i => inferType(abs(i), ctx), abs(Zero), abs(One))
+    case Term.NatRecursion(forZero, forN) => {
+      val forZeroT = inferType(forZero, ctx)
+      // TODO, do nie stała
+      val P = forZeroT
+      PiType(NatType, _ => P)
+    }
     // has rewrite rules, but is not rewritable
     case Term.Application(fun, arg) =>
       if !inferType(fun, ctx).isInstanceOf[PiType] then throw new TypeCheckFailedException()
@@ -291,7 +309,9 @@ object TypeChecking {
           if inferType(pTpe, ctx) != Universe then throw new TypeCheckFailedException()
           a(PhantomInterval.Constant)
         case _ => throw new TypeCheckFailedException()
-    case Term.NatRecursion() => ???
+    case NatRecApply(natRec: Term, nat: Term) =>
+      // TODO, co jak redukowalne
+      throw new TypeCheckFailedException()
   }
 
   private def inferPairType(pairIntro: Term, ctx: Context): PairType = {
@@ -300,6 +320,6 @@ object TypeChecking {
         if inferType(a, ctx) != Universe then throw new TypeCheckFailedException // TODO is this necessary?
         if inferType(b(PhantomVarOfType(a)), ctx) != Universe then throw new TypeCheckFailedException // TODO is this necessary
         tpe
-      case _ => throw new TypeCheckFailedException
+      case _ => throw new TypeCheckFailedException()
   }
 }

@@ -46,4 +46,24 @@ class TypeCheckingTest extends AnyFunSuiteLike {
     assert(pt1.tpe(PhantomInterval.Constant) == NatType)
     assert(pt1 == PathType(_ => NatType, NatZero, Suc(NatZero)))
   }
+
+  test("add") {
+
+    val times2 = NatRecursion(NatZero, _ => prev => Suc(Suc(prev)))
+
+    assert(
+      rewriteRule(NatRecApply(times2, NatZero), Context.Empty) ==
+        NatZero
+    )
+
+    assert(
+      rewriteRule(NatRecApply(times2, Suc(NatZero)), Context.Empty) ==
+        Suc(Suc(NatZero))
+    )
+
+    assert(
+      rewriteRule(NatRecApply(times2, Suc(Suc(NatZero))), Context.Empty) ==
+        Suc(Suc(Suc(Suc(NatZero))))
+    )
+  }
 }
