@@ -1,6 +1,7 @@
 package pl.wojciechkarpiel.szemek
 
 import Interval.{One, PhantomInterval, Zero}
+import Term.Counter
 
 
 final case class Id(value: String) extends AnyVal
@@ -10,23 +11,61 @@ final case class Id(value: String) extends AnyVal
 sealed trait Term
 
 object Term:
-  trait BrokenEq {
-    override def hashCode(): Int = ???
+  object Counter {
+    private var counter: Int = 0
 
-    override def equals(obj: Any): Boolean = ???
+    def next(): Int = {
+      counter += 1
+      counter
+    }
+
+    val Constant: Int = next()
+  }
+
+  final case class Abstraction(argType: Term, abs: Term => Term) {
+    override def hashCode(): Int =
+      Seq(argType, abs(PhantomVarOfType.constant(argType))).hashCode()
+
+    override def equals(obj: Any): Boolean = obj != null && {
+      obj match
+        case Abstraction(otherArgType, otherAbs) =>
+          argType == otherArgType && {
+            val phantomVar = PhantomVarOfType.fresh(argType)
+            abs(phantomVar) == otherAbs(phantomVar)
+          }
+        case _ => false
+    }
+  }
+
+  trait KindOfAbstraction {
+    def abstraction: Abstraction
+
+    override def hashCode(): Int = abstraction.hashCode()
+
+    override def equals(obj: Any): Boolean = obj != null && {
+      obj match
+        case other: KindOfAbstraction => abstraction == other.abstraction
+        case _ => false
+    }
   }
 
   // Pi type
-  final case class Lambda(argType: Term, abs: Term => Term) extends Term with BrokenEq
+  final case class Lambda(argType: Term, abs: Term => Term) extends Term with KindOfAbstraction {
+    override def abstraction: Abstraction = Abstraction(argType, abs)
+  }
 
-  final case class PiType(argType: Term, abs: Term => Term) extends Term with BrokenEq
+  final case class PiType(argType: Term, abs: Term => Term) extends Term with KindOfAbstraction {
+    override def abstraction: Abstraction = Abstraction(argType, abs)
+  }
 
   final case class Application(fun: Term, arg: Term) extends Term
 
   // Sigma type
   final case class PairIntro(fst: Term, snd: Term) extends Term
 
-  final case class PairType(fstTpe: Term, sndTpe: Term => Term) extends Term with BrokenEq
+  final case class PairType(fstTpe: Term, sndTpe: Term => Term) extends Term with KindOfAbstraction {
+    override def abstraction: Abstraction = Abstraction(fstTpe, sndTpe)
+  }
 
   final case class Fst(pair: Term) extends Term
 
@@ -42,9 +81,31 @@ object Term:
   object NatType extends Term
 
   // P class ath
-  final case class PathType(tpe: Interval => Term, start: Term, end: Term) extends Term with BrokenEq
+  final case class PathType(tpe: Interval => Term, start: Term, end: Term) extends Term {
+    override def hashCode(): Int = Seq(tpe(PhantomInterval.Constant), start, end).hashCode()
 
-  final case class PathAbstraction(abs: Interval => Term) extends Term with BrokenEq
+    override def equals(obj: Any): Boolean = obj != null && {
+      obj match
+        case PathType(otherTpe, otherStart, otherEnd) =>
+          start == otherStart && end == otherEnd && {
+            val i = PhantomInterval.fresh()
+            tpe(i) == otherTpe(i)
+          }
+        case _ => false
+    }
+  }
+
+  final case class PathAbstraction(abs: Interval => Term) extends Term {
+    override def hashCode(): Int = abs(PhantomInterval.Constant).hashCode()
+
+    override def equals(obj: Any): Boolean = obj != null && {
+      obj match
+        case PathAbstraction(otherAbs) =>
+          val i = PhantomInterval.fresh()
+          abs(i) == otherAbs(i)
+        case _ => false
+    }
+  }
 
   final case class PathElimination(term: Term, arg: Interval) extends Term
 
@@ -54,7 +115,13 @@ object Term:
   // V class aria
   final case class GlobalVar(id: Id) extends Term
 
-  final case class PhantomVarOfType(tpe: Term) extends Term
+  final case class PhantomVarOfType(tpe: Term, id: Int = Counter.Constant) extends Term
+
+  object PhantomVarOfType {
+    def constant(tpe: Term): PhantomVarOfType = PhantomVarOfType(tpe, Counter.Constant)
+
+    def fresh(tpe: Term): PhantomVarOfType = new PhantomVarOfType(tpe, Counter.next())
+  }
 
 enum Interval:
   case Zero
@@ -62,7 +129,14 @@ enum Interval:
   case Opp(i: Interval)
   case Min(i1: Interval, i2: Interval)
   case Max(i1: Interval, i2: Interval)
-  case PhantomInterval
+  case PhantomInterval(id: Int)
+
+object PhantomInterval {
+  val Constant: Interval = Interval.PhantomInterval(Counter.Constant)
+
+  def fresh(): Interval = Interval.PhantomInterval(Counter.next())
+}
+
 
 object Interval {
   def normalize(i: Interval): Interval = i match
@@ -84,7 +158,7 @@ object Interval {
         case _ => normalize(i2) match
           case One => One
           case _ => max
-    case PhantomInterval => PhantomInterval
+    case PhantomInterval(id) => PhantomInterval(id)
 }
 
 extension (i: Interval)
@@ -163,7 +237,7 @@ object TypeChecking {
 
 
   def inferType(term: Term, ctx: Context): Term = rewriteRule(term, ctx) match {
-    case PhantomVarOfType(tpe) => // todo need to check if tpe is tpe?
+    case PhantomVarOfType(tpe, _) => // todo need to check if tpe is tpe?
       if inferType(tpe, ctx) == Universe then tpe else throw new TypeCheckFailedException()
     case Term.Universe => Universe
     case Term.GlobalVar(id) => ctx.get(id).map(_.tpe).getOrElse(throw new TypeCheckFailedException())
@@ -193,12 +267,12 @@ object TypeChecking {
       if inferType(abs(PhantomVarOfType(argType)), ctx) != Universe then throw new TypeCheckFailedException()
       Universe
     case Term.PathType(tpe, start, end) =>
-      if inferType(tpe(PhantomInterval), ctx) != Universe then throw new TypeCheckFailedException()
+      if inferType(tpe(PhantomInterval.Constant), ctx) != Universe then throw new TypeCheckFailedException()
       if inferType(rewriteRule(start, ctx), ctx) != rewriteRule(tpe(Zero), ctx) then throw new TypeCheckFailedException()
       if inferType(rewriteRule(end, ctx), ctx) != rewriteRule(tpe(One), ctx) then throw new TypeCheckFailedException()
       Universe
     case Term.PathAbstraction(abs) =>
-      inferType(abs(PhantomInterval), ctx)
+      inferType(abs(PhantomInterval.Constant), ctx)
       PathType(i => inferType(abs(i), ctx), abs(Zero), abs(One))
     // has rewrite rules, but is not rewritable
     case Term.Application(fun, arg) =>
@@ -215,7 +289,7 @@ object TypeChecking {
       inferType(term, ctx) match
         case pTpe@PathType(a, _, _) =>
           if inferType(pTpe, ctx) != Universe then throw new TypeCheckFailedException()
-          a(PhantomInterval)
+          a(PhantomInterval.Constant)
         case _ => throw new TypeCheckFailedException()
     case Term.NatRecursion() => ???
   }

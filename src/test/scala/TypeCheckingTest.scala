@@ -1,6 +1,5 @@
 package pl.wojciechkarpiel.szemek
 
-import Interval.PhantomInterval
 import Term.*
 import TypeChecking.{inferType, rewriteRule}
 
@@ -35,7 +34,7 @@ class TypeCheckingTest extends AnyFunSuiteLike {
     val pt0 = inferType(PathAbstraction(_ => NatZero), Context.Empty).asInstanceOf[PathType]
     assert(pt0.start == NatZero)
     assert(pt0.end == NatZero)
-    assert(pt0.tpe(PhantomInterval) == NatType)
+    assert(pt0.tpe(PhantomInterval.Constant) == NatType)
 
     val pa1 = PathAbstraction { i => if i == Interval.Zero then NatZero else Suc(NatZero) }
     assert(rewriteRule(PathElimination(pa1, Interval.Zero), Context.Empty) == NatZero)
@@ -44,6 +43,7 @@ class TypeCheckingTest extends AnyFunSuiteLike {
     val pt1 = inferType(pa1, Context.Empty).asInstanceOf[PathType]
     assert(pt1.start == NatZero)
     assert(pt1.end == Suc(NatZero))
-    assert(pt1.tpe(PhantomInterval) == NatType)
+    assert(pt1.tpe(PhantomInterval.Constant) == NatType)
+    assert(pt1 == PathType(_ => NatType, NatZero, Suc(NatZero)))
   }
 }
