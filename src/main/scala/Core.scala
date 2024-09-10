@@ -201,10 +201,31 @@ object TypeChecking {
       inferType(abs(PhantomInterval), ctx)
       PathType(i => inferType(abs(i), ctx), abs(Zero), abs(One))
     // has rewrite rules, but is not rewritable
-    case Term.Application(fun, arg) => ???
+    case Term.Application(fun, arg) =>
+      if !inferType(fun, ctx).isInstanceOf[PiType] then throw new TypeCheckFailedException()
+      val Term.PiType(argType, abs) = inferType(fun, ctx).asInstanceOf[PiType]
+      if inferType(arg, ctx) != argType then throw new TypeCheckFailedException()
+      abs(arg)
+    case Term.Fst(pair) =>
+      inferPairType(pair, ctx).fstTpe
+    case Term.Snd(pair) =>
+      inferPairType(pair, ctx) match
+        case PairType(a, b) => b(PhantomVarOfType(a))
+    case Term.PathElimination(term, _) =>
+      inferType(term, ctx) match
+        case pTpe@PathType(a, _, _) =>
+          if inferType(pTpe, ctx) != Universe then throw new TypeCheckFailedException()
+          a(PhantomInterval)
+        case _ => throw new TypeCheckFailedException()
     case Term.NatRecursion() => ???
-    case Term.PathElimination(term, arg) => ???
-    case Term.Fst(pair) => ???
-    case Term.Snd(pair) => ???
+  }
+
+  private def inferPairType(pairIntro: Term, ctx: Context): PairType = {
+    inferType(pairIntro, ctx) match
+      case tpe@PairType(a, b) =>
+        if inferType(a, ctx) != Universe then throw new TypeCheckFailedException // TODO is this necessary?
+        if inferType(b(PhantomVarOfType(a)), ctx) != Universe then throw new TypeCheckFailedException // TODO is this necessary
+        tpe
+      case _ => throw new TypeCheckFailedException
   }
 }
