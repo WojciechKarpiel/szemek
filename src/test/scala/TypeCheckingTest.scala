@@ -1,7 +1,7 @@
 package pl.wojciechkarpiel.szemek
 
 import Term.*
-import TypeChecking.{inferType, rewriteRule}
+import TypeChecking.{fullyNormalize, inferType, rewriteRule}
 
 import org.scalatest.funsuite.AnyFunSuiteLike
 
@@ -49,20 +49,24 @@ class TypeCheckingTest extends AnyFunSuiteLike {
 
   test("add") {
 
-    val times2 = NatRecursion(NatZero, _ => prev => Suc(Suc(prev)))
+    val times2 = NatRecursion(_ => NatType, NatZero,
+      //      _ => prev => Suc(Suc(prev))
+      Lambda(NatType, _ => Lambda(NatType, prev => Suc(Suc(prev))))
+    )
 
     assert(
       rewriteRule(NatRecApply(times2, NatZero), Context.Empty) ==
         NatZero
     )
 
+    val onetimestwo = fullyNormalize(NatRecApply(times2, Suc(NatZero)), Context.Empty)
     assert(
-      rewriteRule(NatRecApply(times2, Suc(NatZero)), Context.Empty) ==
+      onetimestwo ==
         Suc(Suc(NatZero))
     )
 
     assert(
-      rewriteRule(NatRecApply(times2, Suc(Suc(NatZero))), Context.Empty) ==
+      fullyNormalize(NatRecApply(times2, Suc(Suc(NatZero))), Context.Empty) ==
         Suc(Suc(Suc(Suc(NatZero))))
     )
   }

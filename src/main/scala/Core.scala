@@ -72,12 +72,15 @@ object Term:
   final case class Snd(pair: Term) extends Term
 
   // Natural numbers
-  object NatZero extends Term
+  object NatZero extends Term {
+    override def toString: String = "0"
+  }
 
-  final case class Suc(n: Term) extends Term
+  final case class Suc(n: Term) extends Term {
+    override def toString: String = s"S($n)"
+  }
 
-  // Todo this oversimplified
-  final case class NatRecursion(forZero: Term, forNext: Term => Term => Term) extends Term
+  final case class NatRecursion(motive: Term => Term, forZero: Term, forNext: Term) extends Term
 
   final case class NatRecApply(natRec: Term, nat: Term) extends Term
 
@@ -211,7 +214,7 @@ object TypeChecking {
             // this is supposed to check many things about the lbda
             // TODO: add test which make this check necessary
             if !inferType(fun, ctx).isInstanceOf[PiType] then throw new TypeCheckFailedException()
-            if inferType(arg, ctx) == argType then abs(arg) else throw new TypeCheckFailedException()
+            if inferType(arg, ctx) == argType then rewriteRule(abs(arg), ctx) else throw new TypeCheckFailedException()
           case _ => app
       case pe@Term.PathElimination(term, arg) =>
         inferType(term, ctx) match
@@ -235,11 +238,12 @@ object TypeChecking {
             if inferType(pair, ctx).isInstanceOf[PairIntro] then snd else throw new TypeCheckFailedException()
           case _ => proj
       case Term.NatRecApply(natRec, nat) => {
-        val NatRecursion(inForZero, inForNext) = rewriteRule(natRec, ctx).asInstanceOf[NatRecursion]
-        // TODO nic nie sprawdza
+        val d@NatRecursion(_, inForZero, inForNext) = rewriteRule(natRec, ctx).asInstanceOf[NatRecursion]
+        inferType(d, ctx)
         rewriteRule(nat, ctx) match
-          case NatZero => inForZero
-          case Suc(n) => rewriteRule(inForNext(n)(rewriteRule(NatRecApply(natRec, n), ctx)), ctx)
+          case NatZero => rewriteRule(inForZero, ctx)
+          case Suc(n) =>
+            rewriteRule(Application(Application(inForNext, nat), NatRecApply(natRec, n)), ctx)
           case _ => throw new TypeCheckFailedException()
 
 
@@ -286,11 +290,12 @@ object TypeChecking {
     case Term.PathAbstraction(abs) =>
       inferType(abs(PhantomInterval.Constant), ctx)
       PathType(i => inferType(abs(i), ctx), abs(Zero), abs(One))
-    case Term.NatRecursion(forZero, forN) => {
-      val forZeroT = inferType(forZero, ctx)
-      // TODO, do nie stała
-      val P = forZeroT
-      PiType(NatType, _ => P)
+    case Term.NatRecursion(motive, forZero, forN) => {
+      val forZeroT = rewriteRule(inferType(forZero, ctx), ctx)
+      if forZeroT != rewriteRule(motive(NatZero), ctx) then throw new TypeCheckFailedException()
+      val expected = rewriteRule(PiType(NatType, n => PiType(motive(n), _ => motive(Suc(n)))), ctx)
+      if rewriteRule(inferType(forN, ctx), ctx) != expected then throw new TypeCheckFailedException()
+      motive(PhantomVarOfType.constant(NatType))
     }
     // has rewrite rules, but is not rewritable
     case Term.Application(fun, arg) =>
@@ -310,8 +315,11 @@ object TypeChecking {
           a(PhantomInterval.Constant)
         case _ => throw new TypeCheckFailedException()
     case NatRecApply(natRec: Term, nat: Term) =>
-      // TODO, co jak redukowalne
-      throw new TypeCheckFailedException()
+      inferType(natRec, ctx) match
+        case NatRecursion(motive, _, _) =>
+          if inferType(nat, ctx) != NatType then throw new TypeCheckFailedException()
+          motive(nat)
+        case _ => throw new TypeCheckFailedException()
   }
 
   private def inferPairType(pairIntro: Term, ctx: Context): PairType = {
@@ -322,4 +330,10 @@ object TypeChecking {
         tpe
       case _ => throw new TypeCheckFailedException()
   }
+
+
+  // TODO smarter way to tranform ast
+  def fullyNormalize(term: Term, ctx: Context): Term = rewriteRule(term, ctx) match
+    case Suc(n) => Suc(fullyNormalize(n, ctx))
+    case todo => todo
 }
