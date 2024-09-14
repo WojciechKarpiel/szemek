@@ -17,5 +17,9 @@ class IntervalTest extends AnyFlatSpec with should.Matchers {
     Min(One, Zero).normalize should be(Zero)
     Max(Zero, One).normalize should be(One)
     Max(One, Zero).normalize should be(One)
+
+    Interval.normalize(Interval.Min(One, PhantomInterval(31))) should be(PhantomInterval(31))
+    Interval.normalize(Interval.Min(PhantomInterval(3), One)) should be(PhantomInterval(3))
+    Interval.normalize(Interval.Max(PhantomInterval(3), Zero)) should be(PhantomInterval(3))
   }
 }

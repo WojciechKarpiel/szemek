@@ -1,7 +1,7 @@
 package pl.wojciechkarpiel.szemek
 
 import Interval.{One, PhantomInterval, Zero}
-import Term.Counter
+import Term.{Counter, PhantomVarOfType}
 
 
 final case class Id(value: String) extends AnyVal
@@ -52,19 +52,51 @@ object Term:
   // Pi type
   final case class Lambda(argType: Term, abs: Term => Term) extends Term with KindOfAbstraction {
     override def abstraction: Abstraction = Abstraction(argType, abs)
+
+    override def toString: String = {
+      val phantomVar = PhantomVarOfType.fresh(argType)
+      s"λ$phantomVar: $argType => ${abs(phantomVar)}"
+    }
   }
 
   final case class PiType(argType: Term, abs: Term => Term) extends Term with KindOfAbstraction {
     override def abstraction: Abstraction = Abstraction(argType, abs)
+
+    override def toString: String = {
+      val phantomVar = PhantomVarOfType.fresh(argType)
+      s"Π$phantomVar: $argType => ${abs(phantomVar)}"
+    }
   }
 
   final case class Application(fun: Term, arg: Term) extends Term
 
   // Sigma type
-  final case class PairIntro(fst: Term, snd: Term) extends Term
+  final case class PairIntro(fst: Term, snd: Term, sndMotive: Term => Term) extends Term {
+    override def hashCode(): Int = Seq(fst, snd, sndMotive(PhantomVarOfType.constant(fst))).hashCode()
+
+    override def equals(obj: Any): Boolean = obj != null && {
+      obj match
+        case PairIntro(otherFst, otherSnd, otherSndMotive) =>
+          fst == otherFst && snd == otherSnd && {
+            val phantomVar = PhantomVarOfType.fresh(fst)
+            sndMotive(phantomVar) == otherSndMotive(phantomVar)
+          }
+        case _ => false
+    }
+
+    override def toString: String = {
+      val phantomVar = PhantomVarOfType.fresh(fst)
+      s"(${fst}, ${snd} [${sndMotive(phantomVar)}])"
+    }
+  }
 
   final case class PairType(fstTpe: Term, sndTpe: Term => Term) extends Term with KindOfAbstraction {
     override def abstraction: Abstraction = Abstraction(fstTpe, sndTpe)
+
+    override def toString: String = {
+      val phantomVar = PhantomVarOfType.fresh(fstTpe)
+      s"Σ$phantomVar: $fstTpe => ${sndTpe(phantomVar)}"
+    }
   }
 
   final case class Fst(pair: Term) extends Term
@@ -99,6 +131,11 @@ object Term:
           }
         case _ => false
     }
+
+    override def toString: String = {
+      val i = PhantomInterval.fresh()
+      s"Path(${tpe(i)}, $start, $end)"
+    }
   }
 
   final case class PathAbstraction(abs: Interval => Term) extends Term {
@@ -111,6 +148,11 @@ object Term:
           abs(i) == otherAbs(i)
         case _ => false
     }
+
+    override def toString: String = {
+      val i = PhantomInterval.fresh()
+      s"λ$i: ${abs(i)}"
+    }
   }
 
   final case class PathElimination(term: Term, arg: Interval) extends Term
@@ -121,7 +163,9 @@ object Term:
   // V class aria
   final case class GlobalVar(id: Id) extends Term
 
-  final case class PhantomVarOfType(tpe: Term, id: Int = Counter.Constant) extends Term
+  final case class PhantomVarOfType(tpe: Term, id: Int = Counter.Constant) extends Term {
+    override def toString: String = s"P($tpe, $id)"
+  }
 
   object PhantomVarOfType {
     def constant(tpe: Term): PhantomVarOfType = PhantomVarOfType(tpe, Counter.Constant)
@@ -152,16 +196,24 @@ object Interval {
       case Zero => One
       case One => Zero
       case _ => opp
+    case Min(i1, One) => normalize(i1)
+    case Max(i1, Zero) => normalize(i1)
     case min@Min(i1, i2) =>
-      normalize(i1) match
+      val n1 = normalize(i1)
+      val n2 = normalize(i2)
+      if n1 == n2 then n1 else n1 match
         case Zero => Zero
-        case _ => normalize(i2) match
+        case One => n2
+        case _ => n2 match
           case Zero => Zero
           case _ => min
     case max@Max(i1, i2) =>
-      normalize(i1) match
+      val n1 = normalize(i1)
+      val n2 = normalize(i2)
+      if n1 == n2 then n1 else n1 match
         case One => One
-        case _ => normalize(i2) match
+        case Zero => n2
+        case _ => n2 match
           case One => One
           case _ => max
     case PhantomInterval(id) => PhantomInterval(id)
@@ -174,6 +226,8 @@ class TypeCheckFailedException() extends RuntimeException() /*with NoStackTrace*
 
 class Context private(map: Map[Id, TypedTerm]) {
   def add(id: Id, term: TypedTerm): Context = new Context(map + (id -> term))
+
+  def add(id: Id, tpe: Term): Context = add(id, TypedTerm(PhantomVarOfType.fresh(tpe), tpe))
 
   def get(id: Id): Option[TypedTerm] = map.get(id)
 
@@ -206,8 +260,8 @@ object TypeChecking {
   //  def natTypeInference(ctx: Context):Inference = Inference(Seq(), ContextTerm(NatType, ctx))
 
 
-  def rewriteRule(term: Term, ctx: Context): Term = {
-    term match
+  def rewriteRule(term: Term, ctx: Context): Term = etaContract({
+    etaContract(term, ctx) match
       case app@Term.Application(fun, arg) =>
         rewriteRule(fun, ctx) match
           case Term.Lambda(argType, abs) =>
@@ -229,12 +283,12 @@ object TypeChecking {
           case _ => throw new TypeCheckFailedException()
       case proj@Term.Fst(pair) =>
         rewriteRule(pair, ctx) match
-          case Term.PairIntro(fst, _) =>
+          case Term.PairIntro(fst, _, _) =>
             if inferType(pair, ctx).isInstanceOf[PairIntro] then fst else throw new TypeCheckFailedException()
           case _ => proj
       case proj@Term.Snd(pair) =>
         rewriteRule(pair, ctx) match
-          case Term.PairIntro(_, snd) =>
+          case Term.PairIntro(_, snd, _) =>
             if inferType(pair, ctx).isInstanceOf[PairIntro] then snd else throw new TypeCheckFailedException()
           case _ => proj
       case Term.NatRecApply(natRec, nat) => {
@@ -249,7 +303,7 @@ object TypeChecking {
 
       }
       case notRewritable => notRewritable
-  }
+  }, ctx)
 
 
   def inferType(term: Term, ctx: Context): Term = rewriteRule(term, ctx) match {
@@ -274,10 +328,14 @@ object TypeChecking {
       if inferType(fstTpe, ctx) != Universe then throw new TypeCheckFailedException()
       if inferType(sndTpe(PhantomVarOfType(fstTpe)), ctx) != Universe then throw new TypeCheckFailedException()
       Universe
-    case Term.PairIntro(fst, snd) => // TODO inexact!
+    case Term.PairIntro(fst, snd, sndMotive) =>
       val fstTpe = inferType(fst, ctx)
       val sndTpe = inferType(snd, ctx)
-      PairType(fstTpe, _ => sndTpe)
+      val sndMotivInstance = sndMotive(fst)
+      // TODO should be lazy eq instead of full norm
+      if sndMotivInstance != fullyNormalize(sndTpe, ctx) then throw new TypeCheckFailedException()
+      //      if sndMotivInstance != rewriteRule(sndTpe,ctx) then throw new TypeCheckFailedException()
+      PairType(fstTpe, sndMotive)
     case Term.PiType(argType, abs) =>
       if inferType(argType, ctx) != Universe then throw new TypeCheckFailedException()
       if inferType(abs(PhantomVarOfType(argType)), ctx) != Universe then throw new TypeCheckFailedException()
@@ -331,9 +389,51 @@ object TypeChecking {
       case _ => throw new TypeCheckFailedException()
   }
 
+  def etaContract(t: Term, ctx: Context): Term = t match
+    case Lambda(argType, abs) =>
+      val phantomVar = PhantomVarOfType.fresh(argType)
+      abs(phantomVar) match
+        case app@Application(fun, arg) if arg == phantomVar =>
+          inferType(argType, ctx)
+          inferType(app, ctx)
+          etaContract(fun, ctx)
+        case _ => t
+    case PathAbstraction(abs) =>
+      val i = PhantomInterval.fresh()
+      abs(i) match
+        case pe@PathElimination(eliminated, arg) if Interval.normalize(arg) == i =>
+          inferType(pe, ctx)
+          etaContract(eliminated, ctx)
+        case _ => t
+    case _ => t
+
 
   // TODO smarter way to tranform ast
-  def fullyNormalize(term: Term, ctx: Context): Term = rewriteRule(term, ctx) match
-    case Suc(n) => Suc(fullyNormalize(n, ctx))
-    case todo => todo
+  def fullyNormalize(term: Term, ctx: Context): Term = {
+    val res = rewriteRule(term, ctx) match
+      case Lambda(argType, abs) => Lambda(fullyNormalize(argType, ctx), x => fullyNormalize(abs(x), ctx))
+      case PiType(argType, abs) => PiType(fullyNormalize(argType, ctx), x => fullyNormalize(abs(x), ctx))
+      case Application(fun, arg) => Application(fullyNormalize(fun, ctx), fullyNormalize(arg, ctx))
+      case PairIntro(fst, snd, sndMotive) => PairIntro(fullyNormalize(fst, ctx), fullyNormalize(snd, ctx), x => fullyNormalize(sndMotive(x), ctx))
+      case PairType(fstTpe, sndTpe) => PairType(fullyNormalize(fstTpe, ctx), x => fullyNormalize(sndTpe(x), ctx))
+      case Fst(pair) => Fst(fullyNormalize(pair, ctx))
+      case Snd(pair) => Snd(fullyNormalize(pair, ctx))
+      case Term.NatZero => NatZero
+      case Suc(n) => Suc(fullyNormalize(n, ctx))
+      case NatRecursion(motive, forZero, forNext) =>
+        NatRecursion(x => fullyNormalize(motive(x), ctx), fullyNormalize(forZero, ctx), fullyNormalize(forNext, ctx))
+      case NatRecApply(natRec, nat) => NatRecApply(fullyNormalize(natRec, ctx), fullyNormalize(nat, ctx))
+      case Term.NatType => NatType
+      case PathType(tpe, start, end) => PathType(i => fullyNormalize(tpe(Interval.normalize(i)), ctx), fullyNormalize(start, ctx), fullyNormalize(end, ctx))
+      case PathAbstraction(abs) =>
+        PathAbstraction(i => fullyNormalize(abs(Interval.normalize(i)), ctx))
+      case PathElimination(term, arg) => PathElimination(fullyNormalize(term, ctx), Interval.normalize(arg))
+      case Term.Universe => Universe
+      case GlobalVar(id) => GlobalVar(id)
+      case PhantomVarOfType(tpe, id) => PhantomVarOfType(fullyNormalize(tpe, ctx), id)
+    if res == term then
+      res
+    else
+      fullyNormalize(res, ctx) // TODO bad looping, try better
+  }
 }
