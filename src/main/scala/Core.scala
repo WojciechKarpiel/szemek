@@ -86,7 +86,7 @@ object Term:
 
     override def toString: String = {
       val phantomVar = PhantomVarOfType.fresh(fst)
-      s"(${fst}, ${snd} [${sndMotive(phantomVar)}])"
+      s"($fst, $snd [${sndMotive(phantomVar)}])"
     }
   }
 
@@ -222,7 +222,7 @@ object Interval {
 extension (i: Interval)
   def normalize: Interval = Interval.normalize(i)
 
-class TypeCheckFailedException() extends RuntimeException() /*with NoStackTrace*/
+class TypeCheckFailedException(msg: String = "nie udało się") extends RuntimeException(msg) /*with NoStackTrace*/
 
 class Context private(map: Map[Id, TypedTerm]) {
   def add(id: Id, term: TypedTerm): Context = new Context(map + (id -> term))
@@ -240,70 +240,56 @@ object Context {
   val Empty: Context = new Context(Map())
 }
 
-final case class ContextTerm(term: Term, ctx: Context)
-
-final case class Inference(preconditions: Seq[ContextTerm], result: ContextTerm)
-
-final case class EqJudgement(rewriteFrom: Term, rewriteTo: Term, tpe: Term)
-
 final case class TypedTerm(term: Term, tpe: Term)
 
 object TypeChecking {
 
   import Term.*
 
-  //Well-formed contexts
-  def validContext(ctx: Context): Boolean = true
-
-  // Well-formed types
-
-  //  def natTypeInference(ctx: Context):Inference = Inference(Seq(), ContextTerm(NatType, ctx))
-
-
-  def rewriteRule(term: Term, ctx: Context): Term = etaContract({
-    etaContract(term, ctx) match
-      case app@Term.Application(fun, arg) =>
-        rewriteRule(fun, ctx) match
-          case Term.Lambda(argType, abs) =>
-            // this is supposed to check many things about the lbda
-            // TODO: add test which make this check necessary
-            if !inferType(fun, ctx).isInstanceOf[PiType] then throw new TypeCheckFailedException()
-            if inferType(arg, ctx) == argType then rewriteRule(abs(arg), ctx) else throw new TypeCheckFailedException()
-          case _ => app
-      case pe@Term.PathElimination(term, arg) =>
-        inferType(term, ctx) match
-          case pTpe@PathType(_, start, end) =>
-            inferType(pTpe, ctx) // in case it's ill-formed
-            Interval.normalize(arg) match
-              case Interval.Zero => rewriteRule(start, ctx)
-              case Interval.One => rewriteRule(end, ctx)
-              case inBetween => rewriteRule(term, ctx) match
-                case PathAbstraction(abs) => rewriteRule(abs(inBetween), ctx)
-                case _ => pe
-          case _ => throw new TypeCheckFailedException()
-      case proj@Term.Fst(pair) =>
-        rewriteRule(pair, ctx) match
-          case Term.PairIntro(fst, _, _) =>
-            if inferType(pair, ctx).isInstanceOf[PairIntro] then fst else throw new TypeCheckFailedException()
-          case _ => proj
-      case proj@Term.Snd(pair) =>
-        rewriteRule(pair, ctx) match
-          case Term.PairIntro(_, snd, _) =>
-            if inferType(pair, ctx).isInstanceOf[PairIntro] then snd else throw new TypeCheckFailedException()
-          case _ => proj
-      case Term.NatRecApply(natRec, nat) => {
-        val d@NatRecursion(_, inForZero, inForNext) = rewriteRule(natRec, ctx).asInstanceOf[NatRecursion]
-        inferType(d, ctx)
-        rewriteRule(nat, ctx) match
-          case NatZero => rewriteRule(inForZero, ctx)
-          case Suc(n) =>
-            rewriteRule(Application(Application(inForNext, nat), NatRecApply(natRec, n)), ctx)
-          case _ => throw new TypeCheckFailedException()
-
-
-      }
-      case notRewritable => notRewritable
-  }, ctx)
+  def rewriteRule(term: Term, ctx: Context): Term = {
+    val res =
+      term match
+        case app@Term.Application(fun, arg) =>
+          rewriteRule(fun, ctx) match
+            case Term.Lambda(argType, abs) =>
+              // this is supposed to check many things about the lbda
+              // TODO: add test which make this check necessary
+              if !inferType(fun, ctx).isInstanceOf[PiType] then throw new TypeCheckFailedException()
+              if inferType(arg, ctx) == argType then rewriteRule(abs(arg), ctx) else throw new TypeCheckFailedException()
+            case _ => app
+        case pe@Term.PathElimination(term, arg) =>
+          inferType(term, ctx) match
+            case pTpe@PathType(_, start, end) =>
+              inferType(pTpe, ctx) // in case it's ill-formed
+              Interval.normalize(arg) match
+                case Interval.Zero => rewriteRule(start, ctx)
+                case Interval.One => rewriteRule(end, ctx)
+                case inBetween => rewriteRule(term, ctx) match
+                  case PathAbstraction(abs) => rewriteRule(abs(inBetween), ctx)
+                  case _ => pe
+            case _ => throw new TypeCheckFailedException()
+        case proj@Term.Fst(pair) =>
+          rewriteRule(pair, ctx) match
+            case Term.PairIntro(fst, _, _) =>
+              if inferType(pair, ctx).isInstanceOf[PairIntro] then fst else throw new TypeCheckFailedException()
+            case _ => proj
+        case proj@Term.Snd(pair) =>
+          rewriteRule(pair, ctx) match
+            case Term.PairIntro(_, snd, _) =>
+              if inferType(pair, ctx).isInstanceOf[PairIntro] then snd else throw new TypeCheckFailedException()
+            case _ => proj
+        case Term.NatRecApply(natRec, nat) =>
+          val d@NatRecursion(_, inForZero, inForNext) = rewriteRule(natRec, ctx).asInstanceOf[NatRecursion]
+          inferType(d, ctx)
+          rewriteRule(nat, ctx) match
+            case NatZero => rewriteRule(inForZero, ctx)
+            case Suc(n) =>
+              rewriteRule(Application(Application(inForNext, nat), NatRecApply(natRec, n)), ctx)
+            case _ => throw new TypeCheckFailedException()
+        case notRewritable => notRewritable
+    val (fin, b) = etaContract(res, ctx)
+    if b then rewriteRule(fin, ctx) else fin
+  }
 
 
   def inferType(term: Term, ctx: Context): Term = rewriteRule(term, ctx) match {
@@ -318,10 +304,10 @@ object TypeChecking {
       else throw new TypeCheckFailedException()
     case Term.Lambda(argType, abs) =>
       // 1. Check that the Arg type is legit
-      if inferType(argType, ctx) != Universe then throw new TypeCheckFailedException();
+      if inferType(argType, ctx) != Universe then throw new TypeCheckFailedException()
       // 2. Check if body type exsits
       val bodyType = inferType(abs(PhantomVarOfType(argType)), ctx)
-      if inferType(bodyType, ctx) != Universe then throw new TypeCheckFailedException();
+      if inferType(bodyType, ctx) != Universe then throw new TypeCheckFailedException()
       PiType(argType, x => inferType(abs(x), ctx))
 
     case Term.PairType(fstTpe, sndTpe) =>
@@ -348,13 +334,12 @@ object TypeChecking {
     case Term.PathAbstraction(abs) =>
       inferType(abs(PhantomInterval.Constant), ctx)
       PathType(i => inferType(abs(i), ctx), abs(Zero), abs(One))
-    case Term.NatRecursion(motive, forZero, forN) => {
+    case Term.NatRecursion(motive, forZero, forN) =>
       val forZeroT = rewriteRule(inferType(forZero, ctx), ctx)
       if forZeroT != rewriteRule(motive(NatZero), ctx) then throw new TypeCheckFailedException()
       val expected = rewriteRule(PiType(NatType, n => PiType(motive(n), _ => motive(Suc(n)))), ctx)
       if rewriteRule(inferType(forN, ctx), ctx) != expected then throw new TypeCheckFailedException()
       motive(PhantomVarOfType.constant(NatType))
-    }
     // has rewrite rules, but is not rewritable
     case Term.Application(fun, arg) =>
       if !inferType(fun, ctx).isInstanceOf[PiType] then throw new TypeCheckFailedException()
@@ -389,23 +374,23 @@ object TypeChecking {
       case _ => throw new TypeCheckFailedException()
   }
 
-  def etaContract(t: Term, ctx: Context): Term = t match
+  private def etaContract(t: Term, ctx: Context): (Term, Boolean) = t match
     case Lambda(argType, abs) =>
       val phantomVar = PhantomVarOfType.fresh(argType)
       abs(phantomVar) match
         case app@Application(fun, arg) if arg == phantomVar =>
           inferType(argType, ctx)
           inferType(app, ctx)
-          etaContract(fun, ctx)
-        case _ => t
+          (fun, true)
+        case _ => (t, false)
     case PathAbstraction(abs) =>
       val i = PhantomInterval.fresh()
       abs(i) match
         case pe@PathElimination(eliminated, arg) if Interval.normalize(arg) == i =>
           inferType(pe, ctx)
-          etaContract(eliminated, ctx)
-        case _ => t
-    case _ => t
+          (eliminated, true)
+        case _ => (t, false)
+    case _ => (t, false)
 
 
   // TODO smarter way to tranform ast
