@@ -2,6 +2,7 @@ package pl.wojciechkarpiel.szemek
 
 import Interval.{One, PhantomInterval, Zero}
 import Term.{Counter, PhantomVarOfType}
+import core.Face
 
 
 final case class Id(value: String) extends AnyVal
@@ -173,6 +174,10 @@ object Term:
     def fresh(tpe: Term): PhantomVarOfType = new PhantomVarOfType(tpe, Counter.next())
   }
 
+  // todo: Add global restrictions to ctx also?
+  case class Restricted(face: Face) extends Term
+//  case class System(value: Seq[(Face, Term)]) extends Term
+
 enum Interval:
   case Zero
   case One
@@ -224,7 +229,8 @@ extension (i: Interval)
 
 class TypeCheckFailedException(msg: String = "nie udało się") extends RuntimeException(msg) /*with NoStackTrace*/
 
-class Context private(map: Map[Id, TypedTerm]) {
+// TODO handle restrictions
+class Context private(map: Map[Id, TypedTerm], restrictions: Seq[Face] = Seq()) {
   def add(id: Id, term: TypedTerm): Context = new Context(map + (id -> term))
 
   def add(id: Id, tpe: Term): Context = add(id, TypedTerm(PhantomVarOfType.fresh(tpe), tpe))
