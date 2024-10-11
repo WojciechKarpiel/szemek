@@ -3,6 +3,7 @@ package pl.wojciechkarpiel.szemek
 import Interval.{One, PhantomInterval, Zero}
 import Term.{Counter, PhantomVarOfType}
 import core.Face
+import core.Face.OneFace
 
 
 final case class Id(value: String) extends AnyVal
@@ -175,8 +176,26 @@ object Term:
   }
 
   // todo: Add global restrictions to ctx also?
-  case class Restricted(face: Face) extends Term
-//  case class System(value: Seq[(Face, Term)]) extends Term
+  //  case class Restricted(face: Face) extends Term
+  case class System(value: Seq[(Face, Term)], motive: Term) extends Term // todo eq normalize?
+
+  // If Γ, ϕ ` u : A, then Γ ` a : A[ϕ 7→ u] is an abbreviation for Γ ` a : A and Γ, ϕ ` a = u : A.
+  case class Composition(trm: Interval => (TypedTerm, System)) extends Term {
+    override def hashCode(): Int = trm(PhantomInterval.Constant).hashCode()
+
+    override def equals(obj: Any): Boolean = obj != null && {
+      obj match
+        case Composition(otherTrm) =>
+          val i = PhantomInterval.fresh()
+          trm(i) == otherTrm(i)
+        case _ => false
+    }
+
+    override def toString: String = {
+      val i = PhantomInterval.fresh()
+      s"Comp($i, ${trm(i)})"
+    }
+  }
 
 enum Interval:
   case Zero
@@ -189,7 +208,10 @@ enum Interval:
 object PhantomInterval {
   val Constant: Interval = Interval.PhantomInterval(Counter.Constant)
 
-  def fresh(): Interval = Interval.PhantomInterval(Counter.next())
+  def fresh(): Interval = {
+    val id = Counter.next()
+    Interval.PhantomInterval(id)
+  }
 }
 
 
@@ -231,7 +253,9 @@ class TypeCheckFailedException(msg: String = "nie udało się") extends RuntimeE
 
 // TODO handle restrictions
 class Context private(map: Map[Id, TypedTerm], restrictions: Seq[Face] = Seq()) {
-  def add(id: Id, term: TypedTerm): Context = new Context(map + (id -> term))
+  def add(id: Id, term: TypedTerm): Context = new Context(map + (id -> term), restrictions)
+
+  def restricted(f: Face): Context = new Context(map, restrictions :+ f)
 
   def add(id: Id, tpe: Term): Context = add(id, TypedTerm(PhantomVarOfType.fresh(tpe), tpe))
 
@@ -252,7 +276,15 @@ object TypeChecking {
 
   import Term.*
 
+  // TODO consider restrictions!!!! maybe separate fn
+  //      basically each time you endounter an Interval u need to move
+  //      A few guidelines for what happens in case of a specific relation:
+  //      - i -> Zero/One => Zero/One
+  //      - Opp(i) -> j => j (normalize opp to non-opp
+  //      - Phantom(n+m) -> Phantom(n) => Phantom(n) // lower number wind
+  /* example: Path (A->B).apply(i) gdzie f:i=0 to A*/
   def rewriteRule(term: Term, ctx: Context): Term = {
+    // todo is reweirerule for system  [t1 F1, ..,ti,Fi..]-> `ti` ?
     val res =
       term match
         case app@Term.Application(fun, arg) =>
@@ -298,7 +330,61 @@ object TypeChecking {
   }
 
 
+  def simplifyCongruences(term: Term, f: Face): Term = {
+    def work(term: Term): Term = term match
+      case Lambda(argType, abs) => Lambda(work(argType), x => work(abs(x)))
+      case PiType(argType, abs) => PiType(work(argType), x => work(abs(x)))
+      case Application(fun, arg) => Application(work(fun), work(arg))
+      case PairIntro(fst, snd, sndMotive) => PairIntro(work(fst), work(snd), x => work(sndMotive(x)))
+      case PairType(fstTpe, sndTpe) => PairType(work(fstTpe), x => work(sndTpe(x)))
+      case Fst(pair) => Fst(work(pair))
+      case Snd(pair) => Snd(work(pair))
+      case Term.NatZero => NatZero
+      case Suc(n) => Suc(work(n))
+      case NatRecursion(motive, forZero, forNext) => NatRecursion(x => work(motive(x)), work(forZero), work(forNext))
+      case NatRecApply(natRec, nat) => NatRecApply(work(natRec), work(nat))
+      case Term.NatType => NatType
+      case Term.Universe => Universe
+      case GlobalVar(id) => GlobalVar(id)
+      case PhantomVarOfType(tpe, id) => PhantomVarOfType(work(tpe), id)
+      case PathElimination(term, arg) =>
+        val i = Face.simplifyCongruences(arg, f)
+        PathElimination(work(term), i)
+      case PathType(tpe, start, end) =>
+        // do we need work after simpltfycong already called?
+        PathType(i => work(tpe(Face.simplifyCongruences(i, f))), work(start), work(end))
+      case PathAbstraction(abs) =>
+        PathAbstraction(i => work(abs(Face.simplifyCongruences(i, f))))
+      case System(value, motive) => // not sure if ok
+        System(value.map { case (f, t) => (f, work(t)) }, work(motive))
+
+    work(term)
+  }
+
   def inferType(term: Term, ctx: Context): Term = rewriteRule(term, ctx) match {
+    case System(pairs_, motive) =>
+      val pairs = pairs_.map { case (f, t) => (Face.reduce(f), t) }
+      // 1. check if the value is OK
+      val faces = pairs.map(_._1)
+      if !Face.sufficientlyRestricted(faces) then throw new TypeCheckFailedException()
+      // all types with simple restrictions is A
+      pairs.foreach { case (f, t) =>
+        val t2 = simplifyCongruences(t, f)
+        if inferType(t2, ctx) != Universe then throw new TypeCheckFailedException()
+
+        if rewriteRule(t2, ctx) != motive then throw new TypeCheckFailedException()
+      }
+
+      pairs.foreach { case (f1, t1) =>
+        pairs.foreach { case (f2, t2) =>
+          val f = Face.FaceMin(f1, f2)
+          val ts1 = simplifyCongruences(t1, f)
+          val ts2 = simplifyCongruences(t2, f)
+          if ts1 != ts2 then throw new TypeCheckFailedException()
+        }
+      }
+
+      motive
     case PhantomVarOfType(tpe, _) => // todo need to check if tpe is tpe?
       if inferType(tpe, ctx) == Universe then tpe else throw new TypeCheckFailedException()
     case Term.Universe => Universe
@@ -369,6 +455,10 @@ object TypeChecking {
           if inferType(nat, ctx) != NatType then throw new TypeCheckFailedException()
           motive(nat)
         case _ => throw new TypeCheckFailedException()
+    case Composition(term) =>
+      val oned = term(Interval.One)
+      // todo checks!
+      oned._1.tpe // TODO withing a system? what does it even mean
   }
 
   private def inferPairType(pairIntro: Term, ctx: Context): PairType = {
@@ -402,6 +492,36 @@ object TypeChecking {
   // TODO smarter way to tranform ast
   def fullyNormalize(term: Term, ctx: Context): Term = {
     val res = rewriteRule(term, ctx) match
+      case System(pairs, motive) =>
+        // TODO nornalization should happen within the updated context?
+        val k3kd = System(pairs.map { case (f, t) => (Face.reduce(f), fullyNormalize(t, ctx)) }, motive)
+        val k3k = rewriteRule(k3kd, ctx)
+        k3k match
+          case system: System =>
+            val d = system.value.find(d => d._1 == OneFace) // what if multiple? shall we verify the overlap?
+            d.map(_._2).getOrElse(k3k)
+          case _ => k3k
+
+      case c: Composition =>
+        val r: Composition = Composition(i => {
+          val trm = c.trm(i)
+          val (tt, oldsystem) = trm
+          val ntt = TypedTerm(fullyNormalize(tt.term, ctx), fullyNormalize(tt.tpe, ctx))
+          val nsq = fullyNormalize(oldsystem, ctx)
+          nsq match
+            case s: System => (ntt, s)
+            case notSystem => (ntt, {
+              System(Seq((OneFace, notSystem)), inferType(notSystem, ctx))
+            })
+        });
+        val interval = PhantomInterval.fresh()
+        val expr = r.trm(interval)
+        if expr._2.value.size == 1 && expr._2.value.head._1 == OneFace then {
+          // TODO check also if the phantom interval is here, can't do it if it is
+          //     or actually not, it's fine
+          r.trm(One)._2.value.head._2 // Γ ` compi A [1F 7→ u] a0 = u(i1)
+        }
+        else r
       case Lambda(argType, abs) => Lambda(fullyNormalize(argType, ctx), x => fullyNormalize(abs(x), ctx))
       case PiType(argType, abs) => PiType(fullyNormalize(argType, ctx), x => fullyNormalize(abs(x), ctx))
       case Application(fun, arg) => Application(fullyNormalize(fun, ctx), fullyNormalize(arg, ctx))

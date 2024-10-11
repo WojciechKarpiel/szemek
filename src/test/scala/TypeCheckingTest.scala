@@ -3,6 +3,7 @@ package pl.wojciechkarpiel.szemek
 import Interval.Min
 import Term.*
 import TypeChecking.{fullyNormalize, inferType, rewriteRule}
+import core.Face
 
 import org.scalatest.funsuite.AnyFunSuiteLike
 
@@ -147,5 +148,69 @@ class TypeCheckingTest extends AnyFunSuiteLike {
       PairIntro(b, p, x => PathType(_ => A, a, x))
     )
     assert(red == expected)
+  }
+
+  test("composition - paper 4.3") {
+    val a = Term.GlobalVar(Id("a"))
+    val A = Term.GlobalVar(Id("A"))
+    val b = Term.GlobalVar(Id("b"))
+    val c = Term.GlobalVar(Id("c"))
+    val p = Term.GlobalVar(Id("p"))
+    val q = Term.GlobalVar(Id("q"))
+    val ctx = Context.Empty
+      .add(A.id, Universe)
+      .add(a.id, A)
+      .add(b.id, A)
+      .add(c.id, A)
+      .add(p.id, PathType(_ => A, a, b))
+      .add(q.id, PathType(_ => A, b, c))
+
+    // full problem
+    val pathTransport = PathAbstraction { i =>
+      Composition { j =>
+        (TypedTerm(PathElimination(p, i), A),
+          System(
+            Seq(
+              (Face.EqZero(i), a),
+              (Face.EqOne(i), PathElimination(q, j)),
+            ),
+            A
+          ))
+      }
+    }
+
+    val expectedType = PathType(_ => A, a, c)
+    val inferred = inferType(pathTransport, ctx)
+    val reduced = fullyNormalize(inferred, ctx)
+    assert(reduced == expectedType);
+  }
+
+  test("comp judgement eq") {
+    // TODO Γ ` compi A [1F 7→ u] a0 = u(i1)
+    val a = Term.GlobalVar(Id("a"))
+    val A = Term.GlobalVar(Id("A"))
+    val b = Term.GlobalVar(Id("b"))
+    val c = Term.GlobalVar(Id("c"))
+    val p = Term.GlobalVar(Id("p"))
+    val q = Term.GlobalVar(Id("q"))
+    val ctx = Context.Empty
+      .add(A.id, Universe)
+      .add(a.id, A)
+      .add(b.id, A)
+      .add(c.id, A)
+      .add(p.id, PathType(_ => A, a, b))
+      .add(q.id, PathType(_ => A, b, c))
+
+    // a simpler subproblem
+    {
+      val trm = Composition { i =>
+        (TypedTerm(b, A),
+          System(Seq((Face.OneFace, PathElimination(q, i))), A)
+        )
+      }
+
+      val l3l = fullyNormalize(trm, ctx)
+      assert(l3l == c)
+    }
   }
 }

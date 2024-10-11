@@ -49,6 +49,7 @@ class FaceTest extends AnyFlatSpec with Matchers {
       FaceMin(f, EqOne(i)),
     )
     reduce(r) shouldBe r
+    simplifyCongruences(i, f) shouldBe i
   }
 
   it should "compute congurence of intervals - example from paper 1" in {
@@ -62,6 +63,9 @@ class FaceTest extends AnyFlatSpec with Matchers {
       up(Zero, Opp(j)), up(One, j),
       up(i, Opp(j)), up(j, Opp(i)),
     )
+
+    simplifyCongruences(i, f) shouldBe Zero
+    simplifyCongruences(j, f) shouldBe One
   }
   it should "compute congurence of intervals - example from paper 2" in {
     val i = Interval.PhantomInterval(1)
@@ -72,5 +76,7 @@ class FaceTest extends AnyFlatSpec with Matchers {
     )
     IntervalCongruence.fromFace(f) shouldBe IntervalCongruence(Set(UnorderedPair(Opp(i), j), UnorderedPair(i, Opp(j))))
     Face.congurentUnderRestriction(i, Opp(j), f) shouldBe true
+    Face.simplifyCongruences(i, f) shouldBe i
+    simplifyCongruences(Opp(j), f) shouldBe i
   }
 }
