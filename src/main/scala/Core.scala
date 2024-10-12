@@ -118,7 +118,9 @@ object Term:
 
   final case class NatRecApply(natRec: Term, nat: Term) extends Term
 
-  object NatType extends Term
+  object NatType extends Term {
+    override def toString: String = "ℕ"
+  }
 
   // P class ath
   final case class PathType(tpe: Interval => Term, start: Term, end: Term) extends Term {
@@ -166,7 +168,7 @@ object Term:
   final case class GlobalVar(id: Id) extends Term
 
   final case class PhantomVarOfType(tpe: Term, id: Int = Counter.Constant) extends Term {
-    override def toString: String = s"P($tpe, $id)"
+    override def toString: String = s"φ($tpe, $id)" // Φφ
   }
 
   object PhantomVarOfType {

@@ -8,5 +8,6 @@ lazy val root = (project in file("."))
   .settings(
     name := "szemek",
     idePackagePrefix := Some("pl.wojciechkarpiel.szemek"),
-    libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.19" % "test"
+    libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.19" % "test",
+    libraryDependencies += "org.parboiled" %% "parboiled" % "2.5.1",
   )
