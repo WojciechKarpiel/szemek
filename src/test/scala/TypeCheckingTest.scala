@@ -119,6 +119,19 @@ class TypeCheckingTest extends AnyFunSuiteLike {
     assert(ans == expected)
   }
 
+  test("reduction bug repr - infinite loop") {
+    val a = Term.GlobalVar(Id("a"))
+    val A = Term.GlobalVar(Id("A"))
+    val ctx = Context.Empty
+      .add(A.id, Universe)
+      .add(a.id, A)
+
+    val t = PathAbstraction(_ => a)
+    rewriteRule(t, ctx)
+    fullyNormalize(t, ctx)
+    assert(fullyNormalize(t, ctx) == t)
+  }
+
   test("From paper section 3.2 - third") {
     val a = Term.GlobalVar(Id("a"))
     val A = Term.GlobalVar(Id("A"))

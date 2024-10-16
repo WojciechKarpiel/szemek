@@ -142,12 +142,12 @@ object Term:
     }
   }
 
-  final case class PathAbstraction(abs: Interval => Term) extends Term {
+  final case class PathAbstraction(abs: Interval => Term, metadata: Metadata = Metadata.Empty) extends Term {
     override def hashCode(): Int = abs(PhantomInterval.Constant).hashCode()
 
     override def equals(obj: Any): Boolean = obj != null && {
       obj match
-        case PathAbstraction(otherAbs) =>
+        case PathAbstraction(otherAbs, _) =>
           val i = PhantomInterval.fresh()
           abs(i) == otherAbs(i)
         case _ => false
@@ -155,7 +155,7 @@ object Term:
 
     override def toString: String = {
       val i = PhantomInterval.fresh()
-      s"λ$i: ${abs(i)}"
+      s"<$i> ${abs(i)}"
     }
   }
 
@@ -205,7 +205,7 @@ enum Interval:
   case Opp(i: Interval)
   case Min(i1: Interval, i2: Interval)
   case Max(i1: Interval, i2: Interval)
-  case PhantomInterval(id: Int)
+  case PhantomInterval(id: Int) // TODO toString better
 
 object PhantomInterval {
   val Constant: Interval = Interval.PhantomInterval(Counter.Constant)
@@ -266,6 +266,8 @@ class Context private(map: Map[Id, TypedTerm], restrictions: Seq[Face] = Seq()) 
   def isEmpty: Boolean = map.isEmpty
 
   def contains(id: Id): Boolean = map.contains(id)
+
+  def rawMap = map.map { case (k, v) => (k.value, v.term) }
 }
 
 object Context {
@@ -305,7 +307,7 @@ object TypeChecking {
                 case Interval.Zero => rewriteRule(start, ctx)
                 case Interval.One => rewriteRule(end, ctx)
                 case inBetween => rewriteRule(term, ctx) match
-                  case PathAbstraction(abs) => rewriteRule(abs(inBetween), ctx)
+                  case PathAbstraction(abs, _) => rewriteRule(abs(inBetween), ctx)
                   case _ => pe
             case _ => throw new TypeCheckFailedException()
         case proj@Term.Fst(pair) =>
@@ -355,8 +357,8 @@ object TypeChecking {
       case PathType(tpe, start, end) =>
         // do we need work after simpltfycong already called?
         PathType(i => work(tpe(Face.simplifyCongruences(i, f))), work(start), work(end))
-      case PathAbstraction(abs) =>
-        PathAbstraction(i => work(abs(Face.simplifyCongruences(i, f))))
+      case PathAbstraction(abs, loc) =>
+        PathAbstraction(i => work(abs(Face.simplifyCongruences(i, f))), loc)
       case System(value, motive) => // not sure if ok
         System(value.map { case (f, t) => (f, work(t)) }, work(motive))
 
@@ -425,7 +427,7 @@ object TypeChecking {
       if inferType(rewriteRule(start, ctx), ctx) != rewriteRule(tpe(Zero), ctx) then throw new TypeCheckFailedException()
       if inferType(rewriteRule(end, ctx), ctx) != rewriteRule(tpe(One), ctx) then throw new TypeCheckFailedException()
       Universe
-    case Term.PathAbstraction(abs) =>
+    case Term.PathAbstraction(abs, metadata) =>
       inferType(abs(PhantomInterval.Constant), ctx)
       PathType(i => inferType(abs(i), ctx), abs(Zero), abs(One))
     case Term.NatRecursion(motive, forZero, forN) =>
@@ -481,7 +483,7 @@ object TypeChecking {
           inferType(app, ctx)
           (fun, true)
         case _ => (t, false)
-    case PathAbstraction(abs) =>
+    case PathAbstraction(abs, metadata) =>
       val i = PhantomInterval.fresh()
       abs(i) match
         case pe@PathElimination(eliminated, arg) if Interval.normalize(arg) == i =>
@@ -538,8 +540,8 @@ object TypeChecking {
       case NatRecApply(natRec, nat) => NatRecApply(fullyNormalize(natRec, ctx), fullyNormalize(nat, ctx))
       case Term.NatType => NatType
       case PathType(tpe, start, end) => PathType(i => fullyNormalize(tpe(Interval.normalize(i)), ctx), fullyNormalize(start, ctx), fullyNormalize(end, ctx))
-      case PathAbstraction(abs) =>
-        PathAbstraction(i => fullyNormalize(abs(Interval.normalize(i)), ctx))
+      case PathAbstraction(abs, metadata) =>
+        PathAbstraction(i => fullyNormalize(abs(Interval.normalize(i)), ctx), metadata)
       case PathElimination(term, arg) => PathElimination(fullyNormalize(term, ctx), Interval.normalize(arg))
       case Term.Universe => Universe
       case GlobalVar(id) => GlobalVar(id)
