@@ -5,6 +5,8 @@ import Term.{Counter, PhantomVarOfType}
 import core.Face
 import core.Face.OneFace
 
+import pl.wojciechkarpiel.szemek.TypeChecking.V2.InferResult
+
 
 final case class Id(value: String) extends AnyVal
 
@@ -266,8 +268,6 @@ class Context private(map: Map[Id, TypedTerm], restrictions: Seq[Face] = Seq()) 
   def isEmpty: Boolean = map.isEmpty
 
   def contains(id: Id): Boolean = map.contains(id)
-
-  def rawMap = map.map { case (k, v) => (k.value, v.term) }
 }
 
 object Context {
@@ -279,6 +279,248 @@ final case class TypedTerm(term: Term, tpe: Term)
 object TypeChecking {
 
   import Term.*
+
+  object V2 {
+    enum InferResult:
+      case Ok(tpe: Term)
+      case Fail(msg: String = "nie udalo siw ogarnqt' jytia")
+
+    object InferResult {
+      def wrapFailure(f: Fail, msg: String): Fail = Fail(s"$msg, spovodovane priez: ${f.msg}")
+    }
+
+    import TypeChecking.V2.InferResult.{Fail, Ok}
+
+
+    // TODO better impl
+
+    /** doesn't check if the terma are sound before normalizing */
+    def eqNormalizingNoCheck(t1: Term, t2: Term)(ctx: Context): Boolean = {
+      val t1n = NonCheckingReducer(ctx).reduceHead(t1)
+      val t2n = NonCheckingReducer(ctx).reduceHead(t2)
+      t1n == t2n || {
+        t1n match
+          case PathType(tpe1, start1, end1) =>
+            t2n match
+              case PathType(tpe2, start2, end2) =>
+                val i = PhantomInterval.fresh()
+                eqNormalizingNoCheck(tpe1(i), tpe2(i))(ctx) &&
+                  eqNormalizingNoCheck(start1, start2)(ctx) &&
+                  eqNormalizingNoCheck(end1, end2)(ctx)
+              case _ => false
+          case PathElimination(term1, arg1) =>
+            t2n match
+              case PathElimination(term2, arg2) =>
+                eqNormalizingNoCheck(term1, term2)(ctx) && Interval.normalize(arg1) == Interval.normalize(arg2)
+              case _ => false
+          case _ => false
+      }
+    }
+
+    private class NonIntrospectingIntervalReplacer(existsNow: Interval, shouldExist: Interval) {
+      def apply(term: Term): Term = term match
+        // TODO should we reduce context by first explicitly substituting outside?
+        case Lambda(argType, abs) => Lambda(apply(argType), x => apply(abs(x)))
+        case PiType(argType, abs) => PiType(apply(argType), x => apply(abs(x)))
+        case Application(fun, arg) => Application(apply(fun), apply(arg))
+        case PairIntro(fst, snd, sndMotive) => PairIntro(apply(fst), apply(snd), x => apply(sndMotive(x)))
+        case PairType(fstTpe, sndTpe) =>
+          PairType(apply(fstTpe), x => apply(sndTpe(x)))
+        case Fst(pair) => Fst(apply(pair))
+        case Snd(pair) => Snd(apply(pair))
+        case Term.NatZero => NatZero
+        case Suc(n) => Suc(apply(n))
+        case NatRecursion(motive, forZero, forNext) => NatRecursion(x => apply(motive(x)), apply(forZero), apply(forNext))
+        case NatRecApply(natRec, nat) => NatRecApply(apply(natRec), apply(nat))
+        case Term.NatType => NatType
+        case PathType(tpe, start, end) =>
+          PathType(i => apply(tpe(i)), apply(start), apply(end))
+        case PathAbstraction(abs, metadata) => PathAbstraction(i => apply(abs(i)), metadata)
+        case PathElimination(term, arg) => // note that we're not introspecting the nature of arg
+          PathElimination(apply(term), if arg == existsNow then shouldExist else arg)
+        case Term.Universe => Universe
+        case GlobalVar(id) => GlobalVar(id)
+        case p@PhantomVarOfType(_, _) => p
+        case System(value, motive) => ???
+        case Composition(trm) => ???
+    }
+
+    private class Replacer(existsNow: PhantomVarOfType, shouldExist: Term) {
+      def apply(term: Term): Term = term match
+        case Lambda(argType, abs) => ???
+        case PiType(argType, abs) => PiType(apply(argType), x => apply(abs(x)))
+        case Application(fun, arg) => ???
+        case PairIntro(fst, snd, sndMotive) => ???
+        case PairType(fstTpe, sndTpe) => ???
+        case Fst(pair) => ???
+        case Snd(pair) => ???
+        case Term.NatZero => ???
+        case Suc(n) => ???
+        case NatRecursion(motive, forZero, forNext) => ???
+        case NatRecApply(natRec, nat) => ???
+        case Term.NatType => NatType
+        case PathType(tpe, start, end) => ???
+        case PathAbstraction(abs, metadata) => ???
+        case PathElimination(term, arg) => ???
+        case Term.Universe => ???
+        case g: GlobalVar => g
+        case p: PhantomVarOfType => if p == existsNow then shouldExist else p
+        case System(value, motive) => ???
+        case Composition(trm) => ???
+    }
+
+    class NonCheckingReducer(ctx: Context) {
+
+      // TODO ETA-reduce too
+      def reduceHead(term: Term): Term = term match
+        case pe@PathElimination(path, arg) =>
+          Interval.normalize(arg) match
+            case i@(One | Zero) =>
+              // todo avoid re-checking, just fetch type
+              NonReducingCheckerInferrer(ctx, skipChecksOnlyInfer = true).checkInferType(path) match
+                case Ok(PathType(_, start, end)) =>
+                  if i == Zero then start else end
+                case _ => throw new TypeCheckFailedException() // should not happen
+            case _ => pe
+        case nonReducible => nonReducible
+    }
+
+    def whnfNoCheck(term: Term, ctx: Context): Term = NonCheckingReducer(ctx).reduceHead(term)
+
+    def checkInferType(term: Term, ctx: Context = Context.Empty): InferResult =
+      NonReducingCheckerInferrer(ctx).checkInferType(term)
+
+    private class NonReducingCheckerInferrer(ctx: Context, skipChecksOnlyInfer: Boolean = false) {
+      /**
+       * Checks inferrence correctness.
+       * Does not rewrite eagerly
+       */
+      def checkInferType(term: Term): InferResult = term match
+        case Term.NatZero => Ok(NatType)
+        case Suc(n) => if checkInferType(n) == Ok(NatType) then Ok(NatType) else Fail()
+        case GlobalVar(id) => ctx.get(id).map(t => Ok(t.tpe)).getOrElse(Fail(s"variable $id not found"))
+        case Lambda(argType, abs) =>
+          if checkInferType(argType) != Ok(Universe) then Fail()
+          else {
+            val arg = PhantomVarOfType.fresh(argType)
+            val bodyInstantiated = abs(arg)
+            checkInferType(bodyInstantiated) match
+              case InferResult.Ok(bodyType) =>
+                Ok(PiType(argType, x => Replacer(arg, x).apply(bodyType)))
+              case f: InferResult.Fail => f
+          }
+        case PiType(argType, abs) =>
+          if checkInferType(argType) != Ok(Universe) then Fail()
+          else {
+            val arg = PhantomVarOfType.fresh(argType)
+            val bodyInstantiated = abs(arg)
+            if checkInferType(bodyInstantiated) != Ok(Universe) then Fail()
+            else Ok(Universe)
+          }
+        case Application(fun, arg) =>
+          checkInferType(fun) match
+            case InferResult.Ok(PiType(argType, abs)) =>
+              checkInferType(arg) match
+                case InferResult.Ok(inferredArgType) =>
+                  if eqNormalizingNoCheck(inferredArgType, argType)(ctx) then Ok(abs(arg))
+                  else Fail()
+                case f: InferResult.Fail => f
+            case InferResult.Ok(_) => Fail()
+            case f: InferResult.Fail => f
+        case PairIntro(fst, snd, sndMotive) =>
+          checkInferType(fst) match
+            case InferResult.Ok(fstType) =>
+              checkInferType(snd) match
+                case InferResult.Ok(sndType) =>
+                  // Check if the motive itself is sound
+                  val x = PhantomVarOfType.fresh(fstType)
+                  val generalMotive = sndMotive(x)
+                  checkInferType(generalMotive) match
+                    case InferResult.Ok(_) => // don't care about particular value, just checking
+                      val expected = sndMotive(fst)
+                      if eqNormalizingNoCheck(sndType, expected)(ctx)
+                      then Ok(PairType(fstType, sndMotive))
+                      else Fail(s"Path intro: Provided _._2's type and motive are different:\n$sndType\n$expected")
+                    case f: Fail => InferResult.wrapFailure(f, "motive is wrong")
+                case f: InferResult.Fail => f
+            case f: InferResult.Fail => f
+        case PairType(fstTpe, sndTpe) => ???
+        case Fst(pair) => ???
+        case Snd(pair) => ???
+        case NatRecursion(motive, forZero, forNext) =>
+          // Check that motive is a legit type
+          val x = PhantomVarOfType.fresh(NatType)
+          val instantiatedMotive = motive(x)
+          checkInferType(instantiatedMotive) match
+            case InferResult.Ok(Universe) =>
+              checkInferType(forZero) match
+                case Ok(forZeroTpe) =>
+                  eqNormalizingNoCheck(forZeroTpe, motive(NatZero))(ctx) match
+                    case true =>
+                      checkInferType(forNext) match
+                        case InferResult.Ok(forNextTpe) =>
+                          val expected = PiType(NatType, n => PiType(motive(n), _ => motive(Suc(n))))
+                          eqNormalizingNoCheck(forNextTpe, expected)(ctx) match
+                            case true => Ok(PiType(NatType, motive))
+                            case false => Fail("ForN type mismatch with motive")
+                        case f: InferResult.Fail => f
+                    case false => Fail("Expected NatRec forZero to be of the motive type, but got: " + forZero + s" and motive is: ${motive(NatZero)}")
+                case f: InferResult.Fail => f
+            case InferResult.Ok(tpe) => Fail("Expected NatRec motive to be a type, but got: " + instantiatedMotive)
+            case f: InferResult.Fail => f
+        case NatRecApply(natRec, nat) =>
+          checkInferType(natRec) match
+            // Todo what if it's not a natrec but a lambda - best case is i handle reduction anyway
+            case InferResult.Ok(tpe) =>
+              whnfNoCheck(tpe, ctx) match
+                case PiType(NatType, abs) =>
+                  checkInferType(nat) match
+                    case InferResult.Ok(NatType) =>
+                      Ok(abs(nat))
+                    case InferResult.Ok(other) =>
+                      Fail(s"Expected NatRec arg to be nat, but got $nat o type: " + other)
+                    case f: Fail => f
+                case other => Fail(s"Expected natrec, but got: $natRec of type " + other)
+            case f: Fail => InferResult.wrapFailure(f, "NatRecApply: NatRec has wrong type")
+        case Term.NatType => Ok(Universe)
+        case PathType(tpe, start, end) =>
+          val i = PhantomInterval.fresh()
+          checkInferType(tpe(i)) match
+            case InferResult.Ok(Universe) =>
+              checkInferType(start) match
+                case InferResult.Ok(startType) =>
+                  checkInferType(end) match
+                    case InferResult.Ok(endType) =>
+                      val expectedStartType = tpe(Zero)
+                      val expectedEndType = tpe(One)
+                      if eqNormalizingNoCheck(startType, expectedStartType)(ctx) &&
+                        eqNormalizingNoCheck(endType, expectedEndType)(ctx)
+                      then Ok(Universe)
+                      else Fail(s"Path were expected to start with $expectedStartType and end with $expectedEndType, but is starting with $startType and ending with $endType")
+                    case f: InferResult.Fail => f
+                case f: InferResult.Fail => f
+            case InferResult.Ok(_) => Fail()
+            case f: InferResult.Fail => f
+        case PathAbstraction(abs, metadata) =>
+          val i = PhantomInterval.fresh()
+          checkInferType(abs(i)) match
+            case InferResult.Ok(absTypeUnderI) =>
+              val abstractedType = (j: Interval) => NonIntrospectingIntervalReplacer(i, j).apply(absTypeUnderI)
+              Ok(PathType(abstractedType, abs(Zero), abs(One)))
+            case f: InferResult.Fail => f
+        case PathElimination(term, intervalArg) =>
+          checkInferType(term) match
+            case InferResult.Ok(PathType(tpe, start, end)) =>
+              Ok(tpe(intervalArg)) // TODO will normalization later be able to recoder start and end?
+            case Ok(other) => Fail(s"Tried to apply ${other.getClass.getSimpleName} to interval")
+            case f: InferResult.Fail => f
+        case Term.Universe => Ok(Universe) // russel
+        case PhantomVarOfType(tpe, _) => Ok(tpe) // we assume that phantom vars were constructed using trusted types
+        case System(value, motive) => ???
+        case Composition(trm) => ???
+    }
+  }
+
 
   // TODO consider restrictions!!!! maybe separate fn
   //      basically each time you endounter an Interval u need to move
@@ -365,114 +607,9 @@ object TypeChecking {
     work(term)
   }
 
-  def inferType(term: Term, ctx: Context): Term = rewriteRule(term, ctx) match {
-    case System(pairs_, motive) =>
-      val pairs = pairs_.map { case (f, t) => (Face.reduce(f), t) }
-      // 1. check if the value is OK
-      val faces = pairs.map(_._1)
-      if !Face.sufficientlyRestricted(faces) then throw new TypeCheckFailedException()
-      // all types with simple restrictions is A
-      pairs.foreach { case (f, t) =>
-        val t2 = simplifyCongruences(t, f)
-        if inferType(t2, ctx) != Universe then throw new TypeCheckFailedException()
-
-        if rewriteRule(t2, ctx) != motive then throw new TypeCheckFailedException()
-      }
-
-      pairs.foreach { case (f1, t1) =>
-        pairs.foreach { case (f2, t2) =>
-          val f = Face.FaceMin(f1, f2)
-          val ts1 = simplifyCongruences(t1, f)
-          val ts2 = simplifyCongruences(t2, f)
-          if ts1 != ts2 then throw new TypeCheckFailedException()
-        }
-      }
-
-      motive
-    case PhantomVarOfType(tpe, _) => // todo need to check if tpe is tpe?
-      if inferType(tpe, ctx) == Universe then tpe else throw new TypeCheckFailedException()
-    case Term.Universe => Universe
-    case Term.GlobalVar(id) => ctx.get(id).map(_.tpe).getOrElse(throw new TypeCheckFailedException())
-    case Term.NatType => Universe
-    case Term.NatZero => NatType
-    case Term.Suc(n) =>
-      if inferType(n, ctx) == NatType then NatType
-      else throw new TypeCheckFailedException()
-    case Term.Lambda(argType, abs) =>
-      // 1. Check that the Arg type is legit
-      if inferType(argType, ctx) != Universe then throw new TypeCheckFailedException()
-      // 2. Check if body type exsits
-      val bodyType = inferType(abs(PhantomVarOfType(argType)), ctx)
-      if inferType(bodyType, ctx) != Universe then throw new TypeCheckFailedException()
-      PiType(argType, x => inferType(abs(x), ctx))
-
-    case Term.PairType(fstTpe, sndTpe) =>
-      if inferType(fstTpe, ctx) != Universe then throw new TypeCheckFailedException()
-      if inferType(sndTpe(PhantomVarOfType(fstTpe)), ctx) != Universe then throw new TypeCheckFailedException()
-      Universe
-    case Term.PairIntro(fst, snd, sndMotive) =>
-      val fstTpe = inferType(fst, ctx)
-      val sndTpe = inferType(snd, ctx)
-      val sndMotivInstance = sndMotive(fst)
-      // TODO should be lazy eq instead of full norm
-      if sndMotivInstance != fullyNormalize(sndTpe, ctx) then throw new TypeCheckFailedException()
-      //      if sndMotivInstance != rewriteRule(sndTpe,ctx) then throw new TypeCheckFailedException()
-      PairType(fstTpe, sndMotive)
-    case Term.PiType(argType, abs) =>
-      if inferType(argType, ctx) != Universe then throw new TypeCheckFailedException()
-      if inferType(abs(PhantomVarOfType(argType)), ctx) != Universe then throw new TypeCheckFailedException()
-      Universe
-    case Term.PathType(tpe, start, end) =>
-      if inferType(tpe(PhantomInterval.Constant), ctx) != Universe then throw new TypeCheckFailedException()
-      if inferType(rewriteRule(start, ctx), ctx) != rewriteRule(tpe(Zero), ctx) then throw new TypeCheckFailedException()
-      if inferType(rewriteRule(end, ctx), ctx) != rewriteRule(tpe(One), ctx) then throw new TypeCheckFailedException()
-      Universe
-    case Term.PathAbstraction(abs, metadata) =>
-      inferType(abs(PhantomInterval.Constant), ctx)
-      PathType(i => inferType(abs(i), ctx), abs(Zero), abs(One))
-    case Term.NatRecursion(motive, forZero, forN) =>
-      val forZeroT = rewriteRule(inferType(forZero, ctx), ctx)
-      if forZeroT != rewriteRule(motive(NatZero), ctx) then throw new TypeCheckFailedException()
-      val expected = rewriteRule(PiType(NatType, n => PiType(motive(n), _ => motive(Suc(n)))), ctx)
-      if rewriteRule(inferType(forN, ctx), ctx) != expected then throw new TypeCheckFailedException()
-      motive(PhantomVarOfType.constant(NatType))
-    // has rewrite rules, but is not rewritable
-    case Term.Application(fun, arg) =>
-      if !inferType(fun, ctx).isInstanceOf[PiType] then throw new TypeCheckFailedException()
-      val Term.PiType(argType, abs) = inferType(fun, ctx).asInstanceOf[PiType]
-      if inferType(arg, ctx) != argType then throw new TypeCheckFailedException()
-      abs(arg)
-    case Term.Fst(pair) =>
-      inferPairType(pair, ctx).fstTpe
-    case Term.Snd(pair) =>
-      inferPairType(pair, ctx) match
-        case PairType(a, b) => b(PhantomVarOfType(a))
-    case Term.PathElimination(term, _) =>
-      inferType(term, ctx) match
-        case pTpe@PathType(a, _, _) =>
-          if inferType(pTpe, ctx) != Universe then throw new TypeCheckFailedException()
-          a(PhantomInterval.Constant)
-        case _ => throw new TypeCheckFailedException()
-    case NatRecApply(natRec: Term, nat: Term) =>
-      inferType(natRec, ctx) match
-        case NatRecursion(motive, _, _) =>
-          if inferType(nat, ctx) != NatType then throw new TypeCheckFailedException()
-          motive(nat)
-        case _ => throw new TypeCheckFailedException()
-    case Composition(term) =>
-      val oned = term(Interval.One)
-      // todo checks!
-      oned._1.tpe // TODO withing a system? what does it even mean
-  }
-
-  private def inferPairType(pairIntro: Term, ctx: Context): PairType = {
-    inferType(pairIntro, ctx) match
-      case tpe@PairType(a, b) =>
-        if inferType(a, ctx) != Universe then throw new TypeCheckFailedException // TODO is this necessary?
-        if inferType(b(PhantomVarOfType(a)), ctx) != Universe then throw new TypeCheckFailedException // TODO is this necessary
-        tpe
-      case _ => throw new TypeCheckFailedException()
-  }
+  def inferType(term: Term, ctx: Context): Term = V2.checkInferType(term, ctx) match
+    case InferResult.Ok(tpe) => tpe
+    case InferResult.Fail(msg) => throw new TypeCheckFailedException()
 
   private def etaContract(t: Term, ctx: Context): (Term, Boolean) = t match
     case Lambda(argType, abs) =>

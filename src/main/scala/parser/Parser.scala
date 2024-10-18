@@ -96,62 +96,79 @@ private[parser] object NonHoasTerm {
 
 
 private object ParsingAstTransformer {
-  def transform(term: NonHoasTerm.Term, ctx: Map[String, Term], pathCtx: Map[String, Interval]): Term = term match
+  final case class Ctx private(term: Map[String, Term], interval: Map[String, Interval], shared: Map[String, Term | Interval]) {
+    def addT(kv: (String, Term)): Ctx = copy(term = term + kv, shared = shared + kv)
+
+    def addI(kv: (String, Interval)): Ctx = copy(interval = interval + kv, shared = shared + kv)
+
+    def getT(name: String): Term = term(name)
+
+    def getI(name: String) = interval(name)
+
+    def get(name: String) = shared(name)
+  }
+
+  object Ctx {
+    val Empty = Ctx(Map.empty, Map.empty, Map.empty)
+  }
+
+
+  def transform(term: NonHoasTerm.Term, ctx: Ctx): Term = term match
     case NonHoasTerm.UniverseTerm => Universe
-    case NonHoasTerm.FstTerm(pair) => Fst(transform(pair, ctx, pathCtx))
-    case NonHoasTerm.SndTerm(pair) => Snd(transform(pair, ctx, pathCtx))
+    case NonHoasTerm.FstTerm(pair) => Fst(transform(pair, ctx))
+    case NonHoasTerm.SndTerm(pair) => Snd(transform(pair, ctx))
     case NonHoasTerm.GlobalVarTerm(name) => GlobalVar(Id(name))
     case NonHoasTerm.NatZeroTerm => NatZero
-    case NonHoasTerm.SucTerm(n) => Suc(transform(n, ctx, pathCtx))
+    case NonHoasTerm.SucTerm(n) => Suc(transform(n, ctx))
     case NonHoasTerm.NatTypeTerm => NatType
     case NonHoasTerm.LambdaTerm(varName, argType, body) =>
       // TODO force evaluation? instantiate with phantom?
-      Lambda(transform(argType, ctx, pathCtx), arg => transform(body, ctx + (varName -> arg), pathCtx))
+      Lambda(transform(argType, ctx), arg => transform(body, ctx.addT(varName -> arg)))
     case NonHoasTerm.PiTypeTerm(varName, argType, body) =>
-      PiType(transform(argType, ctx, pathCtx), arg => transform(body, ctx + (varName -> arg), pathCtx))
+      PiType(transform(argType, ctx), arg => transform(body, ctx.addT(varName -> arg)))
     case NonHoasTerm.ApplicationTerm(fun, arg) =>
       // tryParseInterval
-      tryParseInterval(arg, ctx, pathCtx) match
-        case Some(interval) => PathElimination(transform(fun, ctx, pathCtx), interval)
-        case None => Application(transform(fun, ctx, pathCtx), transform(arg, ctx, pathCtx))
+      tryParseInterval(arg, ctx) match
+        case Some(interval) => PathElimination(transform(fun, ctx), interval)
+        case None => Application(transform(fun, ctx), transform(arg, ctx))
     //      // tryparsenonitervak
-    //      val argq = transform(arg, ctx, pathCtx)
-    //      Application(transform(fun, ctx, pathCtx), argq)
+    //      val argq = transform(arg, ctx)
+    //      Application(transform(fun, ctx), argq)
     case NonHoasTerm.PairIntroTerm(fst, snd, sndMotive) =>
-      PairIntro(transform(fst, ctx, pathCtx), transform(snd, ctx, pathCtx), t => transform(sndMotive, ctx + ("_" -> t), pathCtx)) // TODO pair intro is surely wrong
+      PairIntro(transform(fst, ctx), transform(snd, ctx), t => transform(sndMotive, ctx.addT(("_" -> t)))) // TODO pair intro is surely wrong
     case NonHoasTerm.PairTypeTerm(varName, fstType, sndType) =>
-      PairType(transform(fstType, ctx, pathCtx), arg => transform(sndType, ctx + (varName -> arg), pathCtx))
+      PairType(transform(fstType, ctx), arg => transform(sndType, ctx.addT(varName -> arg)))
     case NonHoasTerm.PathAbstractionTerm(varName, body, loc) =>
       PathAbstraction({ i =>
-        val newPathCtx = pathCtx + (varName -> i)
-        transform(body, ctx, newPathCtx)
+        transform(body, ctx.addI(varName -> i))
       }, Metadata(loc))
     case NonHoasTerm.PathTypeTerm(varName, tpe, start, end) =>
-      PathType(arg => transform(tpe, ctx, pathCtx + (varName -> arg)), transform(start, ctx, pathCtx), transform(end, ctx, pathCtx))
+      PathType(arg => transform(tpe, ctx.addI(varName -> arg)), transform(start, ctx), transform(end, ctx))
     case NonHoasTerm.PathEliminationTerm(term, arg) =>
-      PathElimination(transform(term, ctx, pathCtx), transformInterval(arg, pathCtx))
+      PathElimination(transform(term, ctx), transformInterval(arg, ctx))
     case NonHoasTerm.VariableTerm(name, loc) =>
-      guess(name, ctx, pathCtx).asInstanceOf[Term]
+      guess(name, ctx).asInstanceOf[Term]
 
-  private def transformInterval(i: NonHoasTerm.Interval, vars: Map[String, Interval]): Interval = i match
+  private def transformInterval(i: NonHoasTerm.Interval, vars: Ctx): Interval = i match
     case NonHoasTerm.Interval.Zero => Interval.Zero
     case NonHoasTerm.Interval.One => Interval.One
     case NonHoasTerm.Interval.Opp(i) => Interval.Opp(transformInterval(i, vars))
     case NonHoasTerm.Interval.Min(i1, i2) => Interval.Min(transformInterval(i1, vars), transformInterval(i2, vars))
     case NonHoasTerm.Interval.Max(i1, i2) => Interval.Max(transformInterval(i1, vars), transformInterval(i2, vars))
-    case NonHoasTerm.Interval.NamedInterval(name) => vars(name)
+    case NonHoasTerm.Interval.NamedInterval(name) => vars.getI(name)
 
-  private def guess(name: String, ctxctx: Map[String, Term], pathCtx: Map[String, Interval]): Term | Interval =
-    val trm = ctxctx.get(name)
-    val int = pathCtx.get(name)
-    if trm.nonEmpty && int.nonEmpty then throw new TypeCheckFailedException(s"Variable $name found in both contexts")
-    if trm.isEmpty && int.isEmpty then throw new TypeCheckFailedException(s"Variable $name not found in context")
-    if trm.nonEmpty then trm.get else int.get
+  private def guess(name: String, ctx: Ctx): Term | Interval =
+    ctx.get(name)
+  //    val trm = ctxctx.get(name)
+  //    val int = pathCtx.get(name)
+  //    if trm.nonEmpty && int.nonEmpty then throw new TypeCheckFailedException(s"Variable $name found in both contexts")
+  //    if trm.isEmpty && int.isEmpty then throw new TypeCheckFailedException(s"Variable $name not found in context")
+  //    if trm.nonEmpty then trm.get else int.get
 
-  private def tryParseInterval(term: NonHoasTerm.Term, stringToTerm: Map[String, Term], stringToInterval: Map[String, Interval]): Option[Interval] = term match
+  private def tryParseInterval(term: NonHoasTerm.Term, ctx: Ctx): Option[Interval] = term match
     case NonHoasTerm.VariableTerm(name, _) =>
-      guess(name, stringToTerm, stringToInterval) match
+      ctx.get(name) match
         case i: Interval => Some(i)
-        case _ => None
+        case _: Term => None
     case _ => None // TODO
 }

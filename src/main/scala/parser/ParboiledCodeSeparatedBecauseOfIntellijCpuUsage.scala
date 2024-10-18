@@ -2,7 +2,8 @@ package pl.wojciechkarpiel.szemek
 package parser
 
 import org.parboiled2.*
-import org.parboiled2.support.hlist._
+import org.parboiled2.support.hlist.*
+import pl.wojciechkarpiel.szemek.parser.ParsingAstTransformer.Ctx
 
 import scala.util.{Failure, Success}
 
@@ -147,12 +148,15 @@ private[parser] object ParserStarter {
 
   def parse(input: ParserInput) = parseQ(input, Map.empty, Map.empty)
 
-  def parseQ(input: ParserInput, ctx: Map[String, Term], pathCtx: Map[String, Interval]): Term =
+  def parseQ(input: ParserInput, ctxt: Map[String, Term], pathCtx: Map[String, Interval]): Term =
     val parser = new CubicalTypeTheoryParser(input)
 
     parser.InputLine.run() match
       case Success(result) =>
-        ParsingAstTransformer.transform(result, ctx, pathCtx)
+        var ctx = Ctx.Empty
+        ctxt.foreach((k, v) => ctx = ctx.addT(k, v))
+        pathCtx.foreach((k, v) => ctx = ctx.addI(k, v))
+        ParsingAstTransformer.transform(result, ctx)
       case Failure(e: ParseError) =>
         throw sys.error(parser.formatError(e, new ErrorFormatter(showTraces = true)))
       case Failure(e) => throw e

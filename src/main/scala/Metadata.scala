@@ -1,6 +1,6 @@
 package pl.wojciechkarpiel.szemek
 
-import parser.Location
+import parser.{Location, NaiveLocation}
 
 final case class Metadata(location: Location) {
 
@@ -11,5 +11,5 @@ final case class Metadata(location: Location) {
 }
 
 object Metadata {
-  val Empty: Metadata = null
+  val Empty: Metadata = Metadata(NaiveLocation(-1, -1))
 }

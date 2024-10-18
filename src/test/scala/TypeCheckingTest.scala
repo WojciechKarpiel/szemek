@@ -2,12 +2,22 @@ package pl.wojciechkarpiel.szemek
 
 import Interval.Min
 import Term.*
-import TypeChecking.{fullyNormalize, inferType, rewriteRule}
+import TypeChecking.{V2, fullyNormalize, inferType, rewriteRule}
 import core.Face
 
 import org.scalatest.funsuite.AnyFunSuiteLike
+import pl.wojciechkarpiel.szemek.TypeChecking.V2.{InferResult, checkInferType}
+import pl.wojciechkarpiel.szemek.TypeChecking.V2.InferResult.{Fail, Ok}
 
 class TypeCheckingTest extends AnyFunSuiteLike {
+
+  test("Simple type inference") {
+    val lmb = Lambda(NatType, x => Suc(x))
+    val arg = NatZero
+    val app = Application(lmb, arg)
+
+    assert(TypeChecking.V2.checkInferType(app) == Ok(NatType))
+  }
 
   test("App normal OK ") {
     val lmb = Lambda(NatType, x => Suc(Suc(x)))
@@ -56,6 +66,8 @@ class TypeCheckingTest extends AnyFunSuiteLike {
       Lambda(NatType, _ => Lambda(NatType, prev => Suc(Suc(prev))))
     )
 
+    assert(checkInferType(times2) == Ok(PiType(NatType, _ => NatType)))
+
     assert(
       rewriteRule(NatRecApply(times2, NatZero), Context.Empty) ==
         NatZero
@@ -90,8 +102,13 @@ class TypeCheckingTest extends AnyFunSuiteLike {
     val term = PathAbstraction(i => Application(f, PathElimination(p, i)))
     val expectedTpe = PathType(_ => B, Application(f, a), Application(f, b))
     val ctxZeZlymB = ctx.add(b.id, B)
-    assertThrows[TypeCheckFailedException](inferType(term, ctxBezp))
-    assertThrows[TypeCheckFailedException](inferType(term, ctxZeZlymB))
+    val failv11 = V2.checkInferType(term, ctxBezp)
+    assert(failv11.isInstanceOf[Fail])
+
+    V2.checkInferType(PathType(_ => A, a, b), ctxZeZlymB) match
+      case InferResult.Ok(tpe) => fail(s"should fail, was $tpe")
+      case InferResult.Fail(msg) => assert(msg == s"Path were expected to start with GlobalVar(Id(A)) and end with GlobalVar(Id(A)), but is starting with GlobalVar(Id(A)) and ending with GlobalVar(Id(B))")
+
     val inferredNonNormal = inferType(term, ctx)
     val inferredRed = fullyNormalize(inferredNonNormal, ctx)
     assert(inferredRed == expectedTpe)
@@ -153,14 +170,18 @@ class TypeCheckingTest extends AnyFunSuiteLike {
         x => PathType(_ => A, a, x)
       )
     )
-    val tpe = inferType(term, ctx)
-    val red = fullyNormalize(tpe, ctx)
-    val expected = PathType(
-      _ => PairType(A, x => PathType(_ => A, a, x)),
-      PairIntro(a, PathAbstraction(_ => a), x => PathType(_ => A, a, x)),
-      PairIntro(b, p, x => PathType(_ => A, a, x))
-    )
-    assert(red == expected)
+    val inferenceResult = V2.checkInferType(term, ctx)
+    inferenceResult match
+      case InferResult.Ok(tpe) =>
+        val red = fullyNormalize(tpe, ctx)
+        val expected = PathType(
+          _ => PairType(A, x => PathType(_ => A, a, x)),
+          PairIntro(a, PathAbstraction(_ => a), x => PathType(_ => A, a, x)),
+          PairIntro(b, p, x => PathType(_ => A, a, x))
+        )
+        assert(red == expected)
+      case InferResult.Fail(msg) =>
+        fail(msg)
   }
 
   test("composition - paper 4.3") {
