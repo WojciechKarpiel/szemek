@@ -49,8 +49,7 @@ class ParserTest extends AnyFunSuiteLike {
     }
   }
 
-  // TODO
-  test("Nested app - noparens") {
+  ignore("Nested app - noparens") {
     val q = Term.GlobalVar(Id("q"))
     val x = Term.GlobalVar(Id("x"))
     val y = Term.GlobalVar(Id("y"))

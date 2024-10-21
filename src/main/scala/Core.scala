@@ -185,20 +185,22 @@ object Term:
   case class System(value: Seq[(Face, Term)], motive: Term) extends Term // todo eq normalize?
 
   // If Γ, ϕ ` u : A, then Γ ` a : A[ϕ 7→ u] is an abbreviation for Γ ` a : A and Γ, ϕ ` a = u : A.
-  case class Composition(trm: Interval => (TypedTerm, System)) extends Term {
-    override def hashCode(): Int = trm(PhantomInterval.Constant).hashCode()
+  case class Composition(a0: Term, typeAndSystem: Interval => (Term, System)) extends Term {
+    override def hashCode(): Int = typeAndSystem(PhantomInterval.Constant).hashCode()
 
     override def equals(obj: Any): Boolean = obj != null && {
       obj match
-        case Composition(otherTrm) =>
-          val i = PhantomInterval.fresh()
-          trm(i) == otherTrm(i)
+        case Composition(othera0, otherTrm) =>
+          a0 == othera0 && {
+            val i = PhantomInterval.fresh()
+            typeAndSystem(i) == otherTrm(i)
+          }
         case _ => false
     }
 
     override def toString: String = {
       val i = PhantomInterval.fresh()
-      s"Comp($i, ${trm(i)})"
+      s"Comp($i, ${typeAndSystem(i)})"
     }
   }
 
@@ -314,28 +316,28 @@ object TypeChecking {
       ctx.intervalCongruence.exFalsoQuodlibet || {
         val t1n = NonCheckingReducer(ctx).whnfNoCheck(t1).term
         val t2n = NonCheckingReducer(ctx).whnfNoCheck(t2).term
-      t1n == t2n || {
-        t1n match
-          case PathType(tpe1, start1, end1) =>
-            t2n match
-              case PathType(tpe2, start2, end2) =>
-                val i = PhantomInterval.fresh()
-                eqNormalizingNoCheck(tpe1(i), tpe2(i))(ctx) &&
-                  eqNormalizingNoCheck(start1, start2)(ctx) &&
-                  eqNormalizingNoCheck(end1, end2)(ctx)
-              case _ => false
-          case PathElimination(term1, arg1) =>
-            t2n match
-              case PathElimination(term2, arg2) =>
-                ctx.congruent(arg1, arg2) && eqNormalizingNoCheck(term1, term2)(ctx) //then true
-              // or else the terms are totally ignored
-              //                eqNormalizingNoCheck(term1, term2)(ctx) && {
-              //                  Interval.normalize(arg1N) == Interval.normalize(arg2N)
-              //                }
-              case _ => false
-          case _ => false
+        t1n == t2n || {
+          t1n match
+            case PathType(tpe1, start1, end1) =>
+              t2n match
+                case PathType(tpe2, start2, end2) =>
+                  val i = PhantomInterval.fresh()
+                  eqNormalizingNoCheck(tpe1(i), tpe2(i))(ctx) &&
+                    eqNormalizingNoCheck(start1, start2)(ctx) &&
+                    eqNormalizingNoCheck(end1, end2)(ctx)
+                case _ => false
+            case PathElimination(term1, arg1) =>
+              t2n match
+                case PathElimination(term2, arg2) =>
+                  ctx.congruent(arg1, arg2) && eqNormalizingNoCheck(term1, term2)(ctx) //then true
+                // or else the terms are totally ignored
+                //                eqNormalizingNoCheck(term1, term2)(ctx) && {
+                //                  Interval.normalize(arg1N) == Interval.normalize(arg2N)
+                //                }
+                case _ => false
+            case _ => false
+        }
       }
-    }
 
     private class NonIntrospectingIntervalReplacer(existsNow: Interval, shouldExist: Interval) {
       def apply(term: Term): Term = term match
@@ -362,7 +364,7 @@ object TypeChecking {
         case GlobalVar(id) => GlobalVar(id)
         case p@PhantomVarOfType(_, _) => p
         case System(value, motive) => ???
-        case Composition(trm) => ???
+        case Composition(a0, typeAnSystem) => ???
     }
 
     private class Replacer(existsNow: PhantomVarOfType, shouldExist: Term) {
@@ -386,7 +388,7 @@ object TypeChecking {
         case g: GlobalVar => g
         case p: PhantomVarOfType => if p == existsNow then shouldExist else p
         case System(value, motive) => ???
-        case Composition(trm) => ???
+        case Composition(a0, typeAndSystem) => ???
     }
 
     // TODO unused ctx
@@ -609,7 +611,18 @@ object TypeChecking {
                       case None => Ok(motive)
               case f: InferResult.Fail => InferResult.wrapFailure(f, "System motive is not well-formed")
           else Fail(s"Insufficiently restricted faces: $faces")
-        case Composition(trm) => ???
+        case Composition(a0, typeAndSystem) =>
+          //More generally, we write
+          //Γ ` a : A[ϕ1 7→ u1 , . . . , ϕk 7→ uk ] for Γ ` a : A and Γ, ϕi ` a = ui : A for i = 1, . . . , k
+          /*
+          plan:
+          1. check that a0: A(i0)
+          YooOOOO I SHOULDNT BIND i in a0 !!!!!!!!!!!!!!!!!
+           */
+          ???
+
+      def eqNormalazing(t1: Term, t2: Term): Boolean =
+        eqNormalizingNoCheck(t1, t2)(ctx)
     }
   }
 
@@ -686,26 +699,26 @@ object TypeChecking {
             d.map(_._2).getOrElse(k3k)
           case _ => k3k
 
-      case c: Composition =>
-        val r: Composition = Composition(i => {
-          val trm = c.trm(i)
-          val (tt, oldsystem) = trm
-          val ntt = TypedTerm(fullyNormalize(tt.term, ctx), fullyNormalize(tt.tpe, ctx))
-          val nsq = fullyNormalize(oldsystem, ctx)
-          nsq match
-            case s: System => (ntt, s)
-            case notSystem => (ntt, {
-              System(Seq((OneFace, notSystem)), inferType(notSystem, ctx))
-            })
-        });
-        val interval = PhantomInterval.fresh()
-        val expr = r.trm(interval)
-        if expr._2.value.size == 1 && expr._2.value.head._1 == OneFace then {
-          // TODO check also if the phantom interval is here, can't do it if it is
-          //     or actually not, it's fine
-          r.trm(One)._2.value.head._2 // Γ ` compi A [1F 7→ u] a0 = u(i1)
-        }
-        else r
+      case c: Composition => ???
+      //        val r: Composition = Composition(i => {
+      //          val trm = c.typeAndSystem(i)
+      //          val (tt, oldsystem) = trm
+      //          val ntt = TypedTerm(fullyNormalize(tt.term, ctx), fullyNormalize(tt.tpe, ctx))
+      //          val nsq = fullyNormalize(oldsystem, ctx)
+      //          nsq match
+      //            case s: System => (ntt, s)
+      //            case notSystem => (ntt, {
+      //              System(Seq((OneFace, notSystem)), inferType(notSystem, ctx))
+      //            })
+      //        });
+      //        val interval = PhantomInterval.fresh()
+      //        val expr = r.typeAndSystem(interval)
+      //        if expr._2.value.size == 1 && expr._2.value.head._1 == OneFace then {
+      //           TODO check also if the phantom interval is here, can't do it if it is
+      //               or actually not, it's fine
+      //          r.typeAndSystem(One)._2.value.head._2 // Γ ` compi A [1F 7→ u] a0 = u(i1)
+      //        }
+      //        else r
       case Lambda(argType, abs) => Lambda(fullyNormalize(argType, ctx), x => fullyNormalize(abs(x), ctx))
       case PiType(argType, abs) => PiType(fullyNormalize(argType, ctx), x => fullyNormalize(abs(x), ctx))
       case Application(fun, arg) => Application(fullyNormalize(fun, ctx), fullyNormalize(arg, ctx))

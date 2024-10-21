@@ -238,16 +238,17 @@ class TypeCheckingTest extends AnyFunSuiteLike {
 
     // full problem
     val pathTransport = PathAbstraction { i =>
-      Composition { j =>
-        (TypedTerm(PathElimination(p, i), A),
-          System(
-            Seq(
-              (Face.EqZero(i), a),
-              (Face.EqOne(i), PathElimination(q, j)),
-            ),
-            A
-          ))
-      }
+      Composition(PathElimination(p, i),
+        { j =>
+          (A,
+            System(
+              Seq(
+                (Face.EqZero(i), a),
+                (Face.EqOne(i), PathElimination(q, j)),
+              ),
+              A
+            ))
+        })
     }
 
     val expectedType = PathType(_ => A, a, c)
@@ -274,11 +275,12 @@ class TypeCheckingTest extends AnyFunSuiteLike {
 
     // a simpler subproblem
     {
-      val trm = Composition { i =>
-        (TypedTerm(b, A),
-          System(Seq((Face.OneFace, PathElimination(q, i))), A)
-        )
-      }
+      val trm = Composition(b,
+        { i =>
+          (A,
+            System(Seq((Face.OneFace, PathElimination(q, i))), A)
+          )
+        })
 
       val l3l = fullyNormalize(trm, ctx)
       assert(l3l == c)
