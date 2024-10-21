@@ -2,14 +2,20 @@ package pl.wojciechkarpiel.szemek
 
 import Interval.Min
 import Term.*
+import TypeChecking.V2.InferResult.{Fail, Ok}
+import TypeChecking.V2.{InferResult, checkInferType, eqNormalizingNoCheck}
 import TypeChecking.{V2, fullyNormalize, inferType, rewriteRule}
 import core.Face
 
 import org.scalatest.funsuite.AnyFunSuiteLike
-import pl.wojciechkarpiel.szemek.TypeChecking.V2.{InferResult, checkInferType}
-import pl.wojciechkarpiel.szemek.TypeChecking.V2.InferResult.{Fail, Ok}
 
 class TypeCheckingTest extends AnyFunSuiteLike {
+
+  extension (c: InferResult)
+    def tpe: Term = c match
+      case InferResult.Ok(tpe) => tpe
+      case InferResult.Fail(msg) => throw new RuntimeException(s"Expected Ok, got Fail: $msg")
+
 
   test("Simple type inference") {
     val lmb = Lambda(NatType, x => Suc(x))
@@ -182,6 +188,37 @@ class TypeCheckingTest extends AnyFunSuiteLike {
         assert(red == expected)
       case InferResult.Fail(msg) =>
         fail(msg)
+  }
+
+  test("basic system") {
+    // TODO add test for system
+    val A = Term.GlobalVar(Id("A"))
+    val a = Term.GlobalVar(Id("a"))
+    val b = Term.GlobalVar(Id("b"))
+    val c = Term.GlobalVar(Id("c"))
+    val p = Term.GlobalVar(Id("p"))
+    val q = Term.GlobalVar(Id("q"))
+    val ctx = Context.Empty
+      .add(A.id, Universe)
+      .add(a.id, A)
+      .add(b.id, A)
+      .add(c.id, A)
+      .add(p.id, PathType(_ => A, a, b))
+      .add(q.id, PathType(_ => A, b, c))
+
+    val shouldRediceToB = PathAbstraction(i =>
+      System(
+        Seq(
+          (Face.EqZero(i), PathElimination(q, i)),
+          (Face.EqOne(i), PathElimination(p, i))
+        ),
+        A)
+    )
+
+    val tpe1 = V2.checkInferType(shouldRediceToB, ctx).tpe.asInstanceOf[PathType]
+    assert(eqNormalizingNoCheck(tpe1, PathType(_ => A, b, b))(ctx))
+    assert(fullyNormalize(shouldRediceToB, ctx) != b)
+
   }
 
   test("composition - paper 4.3") {

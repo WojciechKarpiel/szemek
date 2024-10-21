@@ -49,7 +49,6 @@ class FaceTest extends AnyFlatSpec with Matchers {
       FaceMin(f, EqOne(i)),
     )
     reduce(r) shouldBe r
-    simplifyCongruences(i, f) shouldBe i
   }
 
   it should "compute congurence of intervals - example from paper 1" in {
@@ -64,8 +63,8 @@ class FaceTest extends AnyFlatSpec with Matchers {
       up(i, Opp(j)), up(j, Opp(i)),
     )
 
-    simplifyCongruences(i, f) shouldBe Zero
-    simplifyCongruences(j, f) shouldBe One
+    assert(congurentUnderRestriction(i, Zero, f))
+    assert(congurentUnderRestriction(j, One, f))
   }
   it should "compute congurence of intervals - example from paper 2" in {
     val i = Interval.PhantomInterval(1)
@@ -76,7 +75,19 @@ class FaceTest extends AnyFlatSpec with Matchers {
     )
     IntervalCongruence.fromFace(f) shouldBe IntervalCongruence(Set(UnorderedPair(Opp(i), j), UnorderedPair(i, Opp(j))))
     Face.congurentUnderRestriction(i, Opp(j), f) shouldBe true
-    Face.simplifyCongruences(i, f) shouldBe i
-    simplifyCongruences(Opp(j), f) shouldBe i
+    assert(congurentUnderRestriction(i, i, f))
+    assert(congurentUnderRestriction(Opp(j), i, f))
+  }
+
+
+  "suff restrctin  " should "suff restr" in {
+    val i = PhantomInterval.fresh()
+    val k = PhantomInterval.fresh()
+    val s = Seq(EqOne(i), EqZero(i))
+    assert(sufficientlyRestricted(s))
+    assert(sufficientlyRestricted(s))
+    assert(!sufficientlyRestricted(s ++ Seq(EqOne(k))))
+    assert(sufficientlyRestricted(Seq(EqZero(k)) ++ s ++ Seq(EqOne(k))))
+
   }
 }

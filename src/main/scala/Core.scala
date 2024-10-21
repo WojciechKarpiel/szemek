@@ -2,10 +2,11 @@ package pl.wojciechkarpiel.szemek
 
 import Interval.{One, PhantomInterval, Zero}
 import Term.{Counter, PhantomVarOfType}
+import TypeChecking.V2.{InferResult, NonCheckingReducer}
 import core.Face
-import core.Face.OneFace
+import core.Face.{IntervalCongruence, OneFace}
 
-import pl.wojciechkarpiel.szemek.TypeChecking.V2.InferResult
+import scala.annotation.tailrec
 
 
 final case class Id(value: String) extends AnyVal
@@ -218,6 +219,9 @@ object PhantomInterval {
   }
 }
 
+object PhI {
+  def fresh() = PhantomInterval.fresh()
+}
 
 object Interval {
   def normalize(i: Interval): Interval = i match
@@ -255,7 +259,7 @@ extension (i: Interval)
 
 class TypeCheckFailedException(msg: String = "nie udało się") extends RuntimeException(msg) /*with NoStackTrace*/
 
-// TODO handle restrictions
+// TODO handle restrictions !!!!!! napravdw trieba
 class Context private(map: Map[Id, TypedTerm], restrictions: Seq[Face] = Seq()) {
   def add(id: Id, term: TypedTerm): Context = new Context(map + (id -> term), restrictions)
 
@@ -268,6 +272,15 @@ class Context private(map: Map[Id, TypedTerm], restrictions: Seq[Face] = Seq()) 
   def isEmpty: Boolean = map.isEmpty
 
   def contains(id: Id): Boolean = map.contains(id)
+
+  lazy val intervalCongruence: IntervalCongruence = {
+    var face = Face.OneFace
+    restrictions.foreach { f => face = Face.FaceMin(face, f) }
+    IntervalCongruence.fromFace(face)
+  }
+
+  def congruent(i1: Interval, i2: Interval): Boolean = Face.congurentUnderRestriction(i1, i2, intervalCongruence)
+  //  def simplifyCongruences(i:Interval):Interval = Face.simplifyCongruences(i, intervalCongruence)
 }
 
 object Context {
@@ -291,13 +304,16 @@ object TypeChecking {
 
     import TypeChecking.V2.InferResult.{Fail, Ok}
 
+    final case class ReductionResult(term: Term, equalToInput: Boolean):
+      def isChanged: Boolean = !equalToInput
 
     // TODO better impl
 
     /** doesn't check if the terma are sound before normalizing */
-    def eqNormalizingNoCheck(t1: Term, t2: Term)(ctx: Context): Boolean = {
-      val t1n = NonCheckingReducer(ctx).reduceHead(t1)
-      val t2n = NonCheckingReducer(ctx).reduceHead(t2)
+    def eqNormalizingNoCheck(t1: Term, t2: Term)(ctx: Context): Boolean =
+      ctx.intervalCongruence.exFalsoQuodlibet || {
+        val t1n = NonCheckingReducer(ctx).whnfNoCheck(t1).term
+        val t2n = NonCheckingReducer(ctx).whnfNoCheck(t2).term
       t1n == t2n || {
         t1n match
           case PathType(tpe1, start1, end1) =>
@@ -311,7 +327,11 @@ object TypeChecking {
           case PathElimination(term1, arg1) =>
             t2n match
               case PathElimination(term2, arg2) =>
-                eqNormalizingNoCheck(term1, term2)(ctx) && Interval.normalize(arg1) == Interval.normalize(arg2)
+                ctx.congruent(arg1, arg2) && eqNormalizingNoCheck(term1, term2)(ctx) //then true
+              // or else the terms are totally ignored
+              //                eqNormalizingNoCheck(term1, term2)(ctx) && {
+              //                  Interval.normalize(arg1N) == Interval.normalize(arg2N)
+              //                }
               case _ => false
           case _ => false
       }
@@ -369,23 +389,63 @@ object TypeChecking {
         case Composition(trm) => ???
     }
 
+    // TODO unused ctx
     class NonCheckingReducer(ctx: Context) {
+      def etaContractNoCheck(t: Term): ReductionResult = {
+        def unchanged = ReductionResult(t, true)
 
-      // TODO ETA-reduce too
-      def reduceHead(term: Term): Term = term match
-        case pe@PathElimination(path, arg) =>
-          Interval.normalize(arg) match
-            case i@(One | Zero) =>
-              // todo avoid re-checking, just fetch type
-              NonReducingCheckerInferrer(ctx, skipChecksOnlyInfer = true).checkInferType(path) match
-                case Ok(PathType(_, start, end)) =>
-                  if i == Zero then start else end
-                case _ => throw new TypeCheckFailedException() // should not happen
-            case _ => pe
-        case nonReducible => nonReducible
+        def changed(t: Term) = ReductionResult(t, false)
+
+        t match {
+          case Lambda(argType, abs) =>
+            val phantomVar = PhantomVarOfType.fresh(argType)
+            abs(phantomVar) match
+              case Application(fun, arg) if arg == phantomVar =>
+                changed(fun)
+              case _ => unchanged
+          case PathAbstraction(abs, metadata) =>
+            val i = PhantomInterval.fresh()
+            abs(i) match
+              case PathElimination(eliminated, arg) if arg == i =>
+                changed(eliminated)
+              case _ => unchanged
+          case _ => unchanged
+        }
+      }
+
+      private def rewriteRuleStep(term: Term): ReductionResult = {
+        def unchanged = ReductionResult(term, true)
+
+        def changed(t: Term) = ReductionResult(t, false)
+
+        term match
+          case PathElimination(path, arg) =>
+            Interval.normalize(arg) match
+              case i@(One | Zero) =>
+                // todo avoid re-checking, just fetch type
+                NonReducingCheckerInferrer(ctx, skipChecksOnlyInfer = true).checkInferType(path) match
+                  case Ok(PathType(_, start, end)) =>
+                    changed(if i == Zero then start else end)
+                  case _ => throw new TypeCheckFailedException() // should not happen
+              case _ => unchanged
+          case System(sys, _) =>
+            sys.find { case (f, _) => Face.reduce(f) == OneFace } match
+              case Some((_, term)) => changed(term)
+              case None => unchanged
+          case nonReducible => unchanged
+      }
+
+      private def reduceStep(term: Term): ReductionResult =
+        val etaContracted = etaContractNoCheck(term)
+        if etaContracted.equalToInput
+        then rewriteRuleStep(term) else etaContracted
+
+      @tailrec
+      final def whnfNoCheck(term: Term): ReductionResult = {
+        val reduced = reduceStep(term)
+        if reduced.equalToInput then reduced else whnfNoCheck(reduced.term)
+      }
     }
-
-    def whnfNoCheck(term: Term, ctx: Context): Term = NonCheckingReducer(ctx).reduceHead(term)
 
     def checkInferType(term: Term, ctx: Context = Context.Empty): InferResult =
       NonReducingCheckerInferrer(ctx).checkInferType(term)
@@ -472,7 +532,7 @@ object TypeChecking {
           checkInferType(natRec) match
             // Todo what if it's not a natrec but a lambda - best case is i handle reduction anyway
             case InferResult.Ok(tpe) =>
-              whnfNoCheck(tpe, ctx) match
+              NonCheckingReducer(ctx).whnfNoCheck(tpe).term match
                 case PiType(NatType, abs) =>
                   checkInferType(nat) match
                     case InferResult.Ok(NatType) =>
@@ -516,7 +576,39 @@ object TypeChecking {
             case f: InferResult.Fail => f
         case Term.Universe => Ok(Universe) // russel
         case PhantomVarOfType(tpe, _) => Ok(tpe) // we assume that phantom vars were constructed using trusted types
-        case System(value, motive) => ???
+        case System(value, motive) =>
+          val faces = value.map(_._1)
+          if Face.sufficientlyRestricted(faces)
+          then
+            // check that the motive is well-formed
+            checkInferType(motive) match
+              case InferResult.Ok(_) =>
+                value.map {
+                  case (face, term) =>
+                    val newCtx = ctx.restricted(face)
+                    NonReducingCheckerInferrer(newCtx).checkInferType(term) match
+                      case InferResult.Ok(restrictedTermType) =>
+                        eqNormalizingNoCheck(restrictedTermType, motive)(ctx) match
+                          case true => Ok(restrictedTermType)
+                          case false => Fail(s"non eq to motive for face $face")
+                      case f: InferResult.Fail => InferResult.wrapFailure(f, s"wrong tpe under face $face")
+                }.find(_.isInstanceOf[Fail]) match
+                  case Some(fail) => fail
+                  case None =>
+                    // no we check the if terms are eq under the faces
+                    value.flatMap { case (f1, t1) =>
+                      value.map { case (f2, t2) =>
+                        val f = Face.FaceMin(f1, f2)
+                        val newCtx = ctx.restricted(f)
+                        eqNormalizingNoCheck(t1, t2)(newCtx) match
+                          case true => Ok(motive)
+                          case false => Fail(s"$t1 and $t2 non eq under faces $f1 and $f2")
+                      }
+                    }.find(_.isInstanceOf[Fail]) match
+                      case Some(fail) => fail
+                      case None => Ok(motive)
+              case f: InferResult.Fail => InferResult.wrapFailure(f, "System motive is not well-formed")
+          else Fail(s"Insufficiently restricted faces: $faces")
         case Composition(trm) => ???
     }
   }
@@ -571,63 +663,14 @@ object TypeChecking {
               rewriteRule(Application(Application(inForNext, nat), NatRecApply(natRec, n)), ctx)
             case _ => throw new TypeCheckFailedException()
         case notRewritable => notRewritable
-    val (fin, b) = etaContract(res, ctx)
-    if b then rewriteRule(fin, ctx) else fin
+    val rr = NonCheckingReducer(ctx).etaContractNoCheck(res)
+    if rr.isChanged then rewriteRule(rr.term, ctx) else rr.term
   }
 
-
-  def simplifyCongruences(term: Term, f: Face): Term = {
-    def work(term: Term): Term = term match
-      case Lambda(argType, abs) => Lambda(work(argType), x => work(abs(x)))
-      case PiType(argType, abs) => PiType(work(argType), x => work(abs(x)))
-      case Application(fun, arg) => Application(work(fun), work(arg))
-      case PairIntro(fst, snd, sndMotive) => PairIntro(work(fst), work(snd), x => work(sndMotive(x)))
-      case PairType(fstTpe, sndTpe) => PairType(work(fstTpe), x => work(sndTpe(x)))
-      case Fst(pair) => Fst(work(pair))
-      case Snd(pair) => Snd(work(pair))
-      case Term.NatZero => NatZero
-      case Suc(n) => Suc(work(n))
-      case NatRecursion(motive, forZero, forNext) => NatRecursion(x => work(motive(x)), work(forZero), work(forNext))
-      case NatRecApply(natRec, nat) => NatRecApply(work(natRec), work(nat))
-      case Term.NatType => NatType
-      case Term.Universe => Universe
-      case GlobalVar(id) => GlobalVar(id)
-      case PhantomVarOfType(tpe, id) => PhantomVarOfType(work(tpe), id)
-      case PathElimination(term, arg) =>
-        val i = Face.simplifyCongruences(arg, f)
-        PathElimination(work(term), i)
-      case PathType(tpe, start, end) =>
-        // do we need work after simpltfycong already called?
-        PathType(i => work(tpe(Face.simplifyCongruences(i, f))), work(start), work(end))
-      case PathAbstraction(abs, loc) =>
-        PathAbstraction(i => work(abs(Face.simplifyCongruences(i, f))), loc)
-      case System(value, motive) => // not sure if ok
-        System(value.map { case (f, t) => (f, work(t)) }, work(motive))
-
-    work(term)
-  }
 
   def inferType(term: Term, ctx: Context): Term = V2.checkInferType(term, ctx) match
     case InferResult.Ok(tpe) => tpe
-    case InferResult.Fail(msg) => throw new TypeCheckFailedException()
-
-  private def etaContract(t: Term, ctx: Context): (Term, Boolean) = t match
-    case Lambda(argType, abs) =>
-      val phantomVar = PhantomVarOfType.fresh(argType)
-      abs(phantomVar) match
-        case app@Application(fun, arg) if arg == phantomVar =>
-          inferType(argType, ctx)
-          inferType(app, ctx)
-          (fun, true)
-        case _ => (t, false)
-    case PathAbstraction(abs, metadata) =>
-      val i = PhantomInterval.fresh()
-      abs(i) match
-        case pe@PathElimination(eliminated, arg) if Interval.normalize(arg) == i =>
-          inferType(pe, ctx)
-          (eliminated, true)
-        case _ => (t, false)
-    case _ => (t, false)
+    case InferResult.Fail(msg) => throw new TypeCheckFailedException(msg)
 
 
   // TODO smarter way to tranform ast

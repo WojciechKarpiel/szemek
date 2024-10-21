@@ -4,6 +4,7 @@ package core
 import Interval.{Max, Min, One, Opp, PhantomInterval, Zero}
 
 import scala.annotation.tailrec
+import scala.collection.mutable
 
 enum Face:
   case ZeroFace
@@ -17,7 +18,29 @@ object Face:
   // TODO imlement it
 
   /** Γ |- ϕ1 ∨ · · · ∨ ϕn = 1F : F. */
-  def sufficientlyRestricted(f: Seq[Face]): Boolean = true
+  def sufficientlyRestricted(f: Seq[Face]): Boolean = {
+
+    val f2 = f.map(reduce)
+    val zerod = mutable.Set[Interval]()
+    val oned = mutable.Set[Interval]()
+
+    f2.foreach {
+      case one: Face.EqOne => oned.add(one.i)
+      case zero: Face.EqZero => zerod.add(zero.i)
+      case _ =>
+    }
+
+    val f3 = f2.map {
+      case EqOne(i) if zerod.contains(i) && oned.contains(i) => OneFace
+      case EqZero(i) if oned.contains(i) && zerod.contains(i) => OneFace
+      case f => f
+    }
+
+    sufficientlyRestricted(f3.reduce(FaceMin.apply))
+  }
+
+  def sufficientlyRestricted(f: Face): Boolean = Face.reduce(f) == OneFace
+
 
   private def reduceStep(f: Face): Face = f match
     case Face.ZeroFace => ZeroFace
@@ -66,7 +89,10 @@ object Face:
     def contains(i: Interval): Boolean = toSet.contains(i)
   }
 
-  case class IntervalCongruence(value: Set[UnorderedPair])
+  case class IntervalCongruence(value: Set[UnorderedPair]) {
+
+    def exFalsoQuodlibet: Boolean = value.contains(UnorderedPair(Interval.Zero, Interval.One))
+  }
 
   object IntervalCongruence {
 
@@ -90,69 +116,27 @@ object Face:
       if newPairs.isEmpty then value else transitiveClosure(value ++ newPairs.flatten)
     }
 
+    // todo reduce first
     def fromFace(f: Face): IntervalCongruence = {
-      def work(f: Face, value: Set[UnorderedPair]): Set[UnorderedPair] = f match
-        case ZeroFace => ???
-        case OneFace => ???
-        case EqZero(i_) =>
-          val i = i_.normalize
-          value + UnorderedPair(i, Interval.Zero) + UnorderedPair(Opp(i).normalize, Interval.One)
-        case EqOne(i_) =>
-          val i = i_.normalize
-          value + UnorderedPair(i, Interval.One) + UnorderedPair(Opp(i).normalize, Interval.Zero)
-        case FaceMin(f1, f2) =>
-          val v1 = work(f1, value)
-          val v2 = work(f2, value)
-          val d = v1.union(v2)
-          val res = transitiveClosure(d)
-          res
-        //          v1.intersect(v2)
-        case FaceMax(f1, f2) =>
-          val v1 = work(f1, value)
-          val v2 = work(f2, value)
-          v1.intersect(v2)
-      //          val res=transitiveClosure(d)
-      //          res
+      f match
+        case Face.ZeroFace => ??? // degenerated everything congruent to everything
+        case Face.OneFace => IntervalCongruence.apply() // no special congruence, just identity
+        case Face.EqZero(i) => IntervalCongruence(UnorderedPair(i, Interval.Zero), UnorderedPair(Opp(i).normalize, Interval.One))
+        case Face.EqOne(i) => IntervalCongruence(UnorderedPair(i, Interval.One), UnorderedPair(Opp(i).normalize, Interval.Zero))
+        case Face.FaceMin(f1, f2) => IntervalCongruence(transitiveClosure(fromFace(f1).value.union(fromFace(f2).value)))
+        case Face.FaceMax(f1, f2) => IntervalCongruence(fromFace(f1).value.intersect(fromFace(f2).value))
 
-      IntervalCongruence(work(reduce(f), Set()))
     }
   }
 
-  // TODO should be the same as "congurentUnderRestriction", add tests for that 
-  def simplifyCongruences(i: Interval, f: Face): Interval = {
-    val congruence = IntervalCongruence.fromFace(f)
 
-    def work(i: Interval): Interval = {
-      val relevantCongruences = congruence.value.filter(p => p.contains(i))
-      val others = relevantCongruences.map(p => if p.a == i then p.b else p.a)
-      // now check if other is the simpler one:
-      if others.contains(Zero) then Zero
-      else if others.contains(One) then One
-      // todo why need phantomiterval here, should include min and max for complete ordering
-      else if i.isInstanceOf[Opp] && others.exists(_.isInstanceOf[PhantomInterval]) then others.find(_.isInstanceOf[PhantomInterval]).get
-      else if {
-        i.isInstanceOf[PhantomInterval] && {
-          val ip = i.asInstanceOf[PhantomInterval]
-          others.exists(o => o.isInstanceOf[PhantomInterval] && o.asInstanceOf[PhantomInterval].id < ip.id)
-        }
-      } then others.filter(o => o.isInstanceOf[PhantomInterval] && o.asInstanceOf[PhantomInterval].id < i.asInstanceOf[PhantomInterval].id)
-        .minBy(_.asInstanceOf[PhantomInterval].id)
-      else {
-        i match
-          case Interval.Zero => Interval.Zero
-          case Interval.One => Interval.One
-          case Interval.Opp(i) => Opp(work(i))
-          case Interval.Min(i11, i12) => Min(work(i11), work(i12))
-          case Interval.Max(i11, i12) => Max(work(i11), work(i12))
-          case p: Interval.PhantomInterval => p //was checked earlier
-      }
-    }
-
-    work(i.normalize)
-  }
   
   def congurentUnderRestriction(i0: Interval, i1: Interval, f: Face): Boolean = {
     val congruence = IntervalCongruence.fromFace(f)
+    congurentUnderRestriction(i0, i1, congruence)
+  }
+
+  def congurentUnderRestriction(i0: Interval, i1: Interval, congruence: IntervalCongruence): Boolean = {
 
     def work(i0: Interval, i1: Interval): Boolean = {
       val ret = i0 == i1 || congruence.value.exists(p => p.contains(i0) && p.contains(i1)) // can be done lazily in `false` bramches
@@ -175,6 +159,7 @@ object Face:
       }
     }
 
+    //    if congruence == DegenerateCongruence then true else
     work(i0.normalize, i1.normalize)
   }
 
