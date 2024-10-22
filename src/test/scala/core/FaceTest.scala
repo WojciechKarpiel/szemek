@@ -86,8 +86,16 @@ class FaceTest extends AnyFlatSpec with Matchers {
     val s = Seq(EqOne(i), EqZero(i))
     assert(sufficientlyRestricted(s))
     assert(sufficientlyRestricted(s))
-    assert(!sufficientlyRestricted(s ++ Seq(EqOne(k))))
+    assert(!sufficientlyRestricted(Seq(EqZero(i)) ++ Seq(EqOne(k))))
+    assert(!sufficientlyRestricted(Seq(EqOne(k))))
+    assert(sufficientlyRestricted(s ++ Seq(EqOne(k))))
     assert(sufficientlyRestricted(Seq(EqZero(k)) ++ s ++ Seq(EqOne(k))))
+
+  }
+  it should "rly resttict" in {
+
+    assert(sufficientlyRestricted(Seq(EqZero(Zero), EqOne(Zero))))
+    assert(sufficientlyRestricted(Seq(EqZero(One), EqOne(One))))
 
   }
 }

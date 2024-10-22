@@ -36,7 +36,7 @@ object Face:
       case f => f
     }
 
-    sufficientlyRestricted(f3.reduce(FaceMin.apply))
+    sufficientlyRestricted(f3.reduce(FaceMax.apply))
   }
 
   def sufficientlyRestricted(f: Face): Boolean = Face.reduce(f) == OneFace

@@ -1,11 +1,12 @@
 package pl.wojciechkarpiel.szemek
 
-import Interval.Min
+import Interval.{Min, One}
 import Term.*
 import TypeChecking.V2.InferResult.{Fail, Ok}
-import TypeChecking.V2.{InferResult, checkInferType, eqNormalizingNoCheck}
-import TypeChecking.{V2, fullyNormalize, inferType, rewriteRule}
+import TypeChecking.V2.{InferResult, NonReducingCheckerInferrer, checkInferType, eqNormalizingNoCheck}
+import TypeChecking.{V2, fullyNormalize, inferType, whfNoCheck, whf as rewriteRule}
 import core.Face
+import core.Face.EqZero
 
 import org.scalatest.funsuite.AnyFunSuiteLike
 
@@ -16,6 +17,12 @@ class TypeCheckingTest extends AnyFunSuiteLike {
       case InferResult.Ok(tpe) => tpe
       case InferResult.Fail(msg) => throw new RuntimeException(s"Expected Ok, got Fail: $msg")
 
+  test("reducing eta non trivial cases") {
+
+    val p = GlobalVar(Id("p"))
+    val trm = PathAbstraction(i => PathElimination(p, Min(i, One)))
+    assert(p == whfNoCheck(trm, Context.Empty))
+  }
 
   test("Simple type inference") {
     val lmb = Lambda(NatType, x => Suc(x))
@@ -162,11 +169,11 @@ class TypeCheckingTest extends AnyFunSuiteLike {
     val B = Term.GlobalVar(Id("B"))
     val p = Term.GlobalVar(Id("p"))
     val ctx = Context.Empty
-      .add(A.id, Universe)
-      .add(B.id, Universe)
-      .add(a.id, A)
-      .add(b.id, A)
-      .add(p.id, PathType(_ => A, a, b))
+      .addChecking(A.id, Universe)
+      .addChecking(B.id, Universe)
+      .addChecking(a.id, A)
+      .addChecking(b.id, A)
+      .addChecking(p.id, PathType(_ => A, a, b))
     val term = PathAbstraction(i =>
       PairIntro(
         PathElimination(p, i),
@@ -219,6 +226,23 @@ class TypeCheckingTest extends AnyFunSuiteLike {
     assert(eqNormalizingNoCheck(tpe1, PathType(_ => A, b, b))(ctx))
     assert(fullyNormalize(shouldRediceToB, ctx) != b)
 
+  }
+
+  test("EqInferrenceUnderFaces") {
+    val i = PhantomInterval.fresh()
+    val a = Term.GlobalVar(Id("a"))
+    val A = Term.GlobalVar(Id("A"))
+    val b = Term.GlobalVar(Id("b"))
+    val p = Term.GlobalVar(Id("p"))
+    val ctx = Context.Empty
+      .add(A.id, Universe)
+      .add(a.id, A)
+      .add(b.id, A)
+      .add(p.id, PathType(_ => A, a, b))
+      .restricted(EqZero(i))
+
+    assert(NonReducingCheckerInferrer(ctx).eqNormalazing(PathElimination(p, i), a))
+    assert(NonReducingCheckerInferrer(ctx).eqNormalazing(a, PathElimination(p, i)))
   }
 
   test("composition - paper 4.3") {
@@ -274,16 +298,16 @@ class TypeCheckingTest extends AnyFunSuiteLike {
       .add(q.id, PathType(_ => A, b, c))
 
     // a simpler subproblem
-    {
-      val trm = Composition(b,
-        { i =>
-          (A,
-            System(Seq((Face.OneFace, PathElimination(q, i))), A)
-          )
-        })
+    val trm = Composition(b,
+      { i =>
+        (A,
+          System(Seq((Face.OneFace, PathElimination(q, i))), A)
+        )
+      })
 
-      val l3l = fullyNormalize(trm, ctx)
-      assert(l3l == c)
-    }
+
+    val l3l = fullyNormalize(trm, ctx)
+    assert(l3l == c)
+    assert(V2.checkInferType(trm, ctx).tpe == A)
   }
 }
