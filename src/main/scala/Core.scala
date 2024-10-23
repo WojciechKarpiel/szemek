@@ -207,6 +207,14 @@ object Term:
     }
   }
 
+  def kanFill(a0: Term, compR: Interval => (Term, System), i: Interval): Term = Composition(
+    a0,
+    j =>
+      val (trm, sys) = compR(Interval.Min(i, j))
+      (trm, sys.copy(value = sys.value ++ Seq((Face.EqZero(i), a0))))
+  )
+
+
 enum Interval:
   case Zero
   case One
@@ -674,7 +682,7 @@ object TypeChecking {
                       case InferResult.Ok(restrictedTermType) =>
                         if eqNormalizingNoCheck(restrictedTermType, motive)(ctx)
                         then Ok(restrictedTermType)
-                        else Fail(s"non eq to motive for face $face")
+                        else Fail(s"non eq to motive ($motive) to term ($restrictedTermType) for face $face")
                       case f: InferResult.Fail => InferResult.wrapFailure(f, s"wrong tpe under face $face")
                 }.find(_.isInstanceOf[Fail]) match
                   case Some(fail) => fail
