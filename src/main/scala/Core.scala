@@ -680,7 +680,7 @@ object TypeChecking {
                     val newCtx = ctx.restricted(face)
                     NonReducingCheckerInferrer(newCtx).checkInferType(term) match
                       case InferResult.Ok(restrictedTermType) =>
-                        if eqNormalizingNoCheck(restrictedTermType, motive)(ctx)
+                        if eqNormalizingNoCheck(restrictedTermType, motive)(newCtx)
                         then Ok(restrictedTermType)
                         else Fail(s"non eq to motive ($motive) to term ($restrictedTermType) for face $face")
                       case f: InferResult.Fail => InferResult.wrapFailure(f, s"wrong tpe under face $face")
