@@ -442,6 +442,10 @@ object TypeChecking {
         def changed(t: Term) = ReductionResult(t, false)
 
         term match
+          case GlobalVar(id) => ctx.get(id) match
+            case Some(TypedTerm(t, _)) if !(t.isInstanceOf[PhantomVarOfType]) =>
+              changed(t) // todo what if this is too eager?
+            case _ => unchanged
           case NatRecApply(natRec, nat) =>
             whnfNoCheck(natRec) match
               case ReductionResult(nrec@NatRecursion(_, forZero, forNext), _) =>

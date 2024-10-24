@@ -1,11 +1,12 @@
 package pl.wojciechkarpiel.szemek
 
+import Interval.{Min, One, Zero}
+import Term.*
+import TypeChecking.V2.{InferResult, eqNormalizingNoCheck}
+import TypeChecking.{V2, fullyNormalizeNoCheck}
+import core.Face
+
 import org.scalatest.funsuite.AnyFunSuiteLike
-import pl.wojciechkarpiel.szemek.Interval.{Min, One, PhantomInterval, Zero}
-import pl.wojciechkarpiel.szemek.Term.*
-import pl.wojciechkarpiel.szemek.TypeChecking.V2
-import pl.wojciechkarpiel.szemek.TypeChecking.V2.InferResult
-import pl.wojciechkarpiel.szemek.core.Face
 
 class ComplexStuffTest extends AnyFunSuiteLike {
 
@@ -18,21 +19,30 @@ class ComplexStuffTest extends AnyFunSuiteLike {
 
     def kn(i: Interval) = kanFill(a0, aTpe, i)
 
-    val ctx = Context.Empty
+    val ctx = Context.Empty // todo better example
       .add(aP.id, PathType(_ => Universe, NatType, NatType)) //todo make it diff
-      .addChecking(a0.id, PathElimination(aP, Zero))
-      .addChecking(u.id, PathType(i => PathElimination(aP, i), NatZero, Suc(NatZero))) // todo wron
+      .add(a0.id, TypedTerm(NatZero, PathElimination(aP, Zero)))
+      .addChecking(u.id, PathType(i => PathElimination(aP, i), NatZero, Suc(NatZero)))
     // 1. Check tpe of kn in general
-    val arbitraryKan = kn(PhI.fresh())
-    // TODO
+    val k = PhI.fresh()
+    val arbitraryKan = kn(k)
     V2.checkInferType(arbitraryKan, ctx) match
-      case InferResult.Ok(tpe) => ???
+      case InferResult.Ok(tpe) =>
+        assert(eqNormalizingNoCheck(tpe, PathElimination(aP, Min(One, k)))(ctx))
       case InferResult.Fail(msg) => fail(msg)
     // 2. Check reduction of Kan0
     val kan0 = kn(Zero)
-    // TODO
+    V2.checkInferType(kan0, ctx) match
+      case InferResult.Ok(tpe) =>
+        assert(eqNormalizingNoCheck(tpe, NatType)(ctx))
+        assert(fullyNormalizeNoCheck(kan0, ctx) == NatZero)
+      case InferResult.Fail(msg) => fail(msg)
     // 3. Check reduction of Kan1
     val kan1 = kn(One)
-    // TODO
+    V2.checkInferType(kan1, ctx) match
+      case InferResult.Ok(tpe) =>
+        assert(eqNormalizingNoCheck(tpe, NatType)(ctx))
+        assert(fullyNormalizeNoCheck(kan1, ctx) == Suc(NatZero))
+      case InferResult.Fail(msg) => fail(msg)
   }
 }
