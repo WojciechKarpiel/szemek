@@ -136,6 +136,30 @@ object Face:
     congurentUnderRestriction(i0, i1, congruence)
   }
 
+
+  def simplifyObviousCongruences(i: Interval, congruence: IntervalCongruence): Interval = {
+    def wrk(j: Interval) = {
+      var iNorm = j
+      val c0 = congruence.value.contains(UnorderedPair(Zero, iNorm))
+      val c1 = congruence.value.contains(UnorderedPair(One, iNorm))
+      if c1 && c0 then throw new TypeCheckFailedException()
+      if c0 then iNorm = Zero
+      if c1 then iNorm = One
+      iNorm
+    }
+
+
+    val j = i match
+      case Interval.Zero => Zero
+      case Interval.One => One
+      case Interval.Opp(i) => Opp(simplifyObviousCongruences(wrk(i), congruence))
+      case Interval.Min(i1, i2) => Min(simplifyObviousCongruences(wrk(i1), congruence), simplifyObviousCongruences(wrk(i2), congruence))
+      case Interval.Max(i1, i2) => Max(simplifyObviousCongruences(wrk(i1), congruence), simplifyObviousCongruences(wrk(i2), congruence))
+      case Interval.PhantomInterval(id) => PhantomInterval(id)
+
+    j
+  }
+
   def congurentUnderRestriction(i0: Interval, i1: Interval, congruence: IntervalCongruence): Boolean = {
 
     def work(i0: Interval, i1: Interval): Boolean = {
@@ -160,7 +184,7 @@ object Face:
     }
 
     //    if congruence == DegenerateCongruence then true else
-    work(i0.normalize, i1.normalize)
+    work(simplifyObviousCongruences(i0, congruence).normalize, simplifyObviousCongruences(i1, congruence).normalize)
   }
 
   def subInterval(input_ : Interval, swapInput_ : Interval, swapOutput_ : Interval): Interval = {
