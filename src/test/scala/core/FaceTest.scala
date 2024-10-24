@@ -98,4 +98,15 @@ class FaceTest extends AnyFlatSpec with Matchers {
     assert(sufficientlyRestricted(Seq(EqZero(One), EqOne(One))))
 
   }
+
+  "congruence" should "fly" in {
+    val i = PhantomInterval.fresh()
+    val j = PhantomInterval.fresh()
+    val fIn = Face.EqZero(j)
+
+    val a = Interval.Min(i, j)
+
+    assert(congurentUnderRestriction(a, Zero, fIn))
+    assert(congurentUnderRestriction(Zero, a, fIn))
+  }
 }
