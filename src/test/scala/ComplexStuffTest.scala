@@ -46,8 +46,7 @@ class ComplexStuffTest extends AnyFunSuiteLike {
       case InferResult.Fail(msg) => fail(msg)
   }
 
-
-  ignore("transport & logistics") {
+  test("transport & logistics") {
     val a0 = GlobalVar(Id("a0"))
     val aP = GlobalVar(Id("A"))
 
@@ -59,10 +58,10 @@ class ComplexStuffTest extends AnyFunSuiteLike {
     checkInferType(t, ctx) match
       case InferResult.Ok(tpe) =>
         assert(tpe == PathElimination(aP, One))
-        // TODO should this normalize?
-        //      with empty system it's non-reducible, because reduction for comp depends on system
-        //      yet in papaer they say CTT is strongly normalizing
-        assert(eqNormalizingNoCheck(t, Suc(NatZero))(ctx))
+        // no normalisation here, otherwise it would prove 0=1
+        // https://claude.ai/chat/00ece1d5-ac4f-4bc2-9996-c690183bc44d
+        // claude says this is the way but i don't like it
+        assert(fullyNormalizeNoCheck(t, ctx).isInstanceOf[Composition])
       case InferResult.Fail(msg) => fail(msg)
   }
 }

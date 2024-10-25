@@ -194,9 +194,16 @@ object Term:
     def fresh(tpe: Term): PhantomVarOfType = new PhantomVarOfType(tpe, Counter.next())
   }
 
-  // todo: Add global restrictions to ctx also?
-  //  case class Restricted(face: Face) extends Term
-  case class System(value: Seq[(Face, Term)], motive: Term) extends Term // todo eq normalize?
+  case class System(value: Seq[(Face, Term)], motive: Term, requiresFullRestriction: Boolean = true /*hack to handle composition easier*/) extends Term {
+    override def hashCode(): Int = (value, motive).hashCode()
+
+    override def equals(obj: Any): Boolean = obj != null && {
+      obj match
+        case System(otherValue, otherMotive, _) =>
+          value == otherValue && motive == otherMotive
+        case _ => false
+    }
+  }
 
   // If Γ, ϕ ` u : A, then Γ ` a : A[ϕ 7→ u] is an abbreviation for Γ ` a : A and Γ, ϕ ` a = u : A.
   // THERE'S NO i in FACES!!! CHECK THAT faces are i-freee! TODO
@@ -403,7 +410,7 @@ object TypeChecking {
         case Term.Universe => Universe
         case GlobalVar(id) => GlobalVar(id)
         case p@PhantomVarOfType(_, _) => p
-        case System(value, motive) => ???
+        case System(value, motive, _) => ???
         case Composition(a0, typeAnSystem) => ???
     }
 
@@ -427,7 +434,7 @@ object TypeChecking {
         case Term.Universe => ???
         case g: GlobalVar => g
         case p: PhantomVarOfType => if p == existsNow then shouldExist else p
-        case System(value, motive) => ???
+        case System(value, motive, _) => ???
         case Composition(a0, typeAndSystem) => ???
     }
 
@@ -501,7 +508,7 @@ object TypeChecking {
                     changed(if i == Zero then start else end)
                   case _ => throw new TypeCheckFailedException() // should not happen
               case _ => unchanged
-          case System(sys, _) =>
+          case System(sys, _, _) =>
             sys.find { case (f, _) => Face.reduce(f) == OneFace } match
               case Some((_, term)) => changed(term)
               case None => unchanged
@@ -690,9 +697,9 @@ object TypeChecking {
             case f: InferResult.Fail => f
         case Term.Universe => Ok(Universe) // russel
         case PhantomVarOfType(tpe, _) => Ok(tpe) // we assume that phantom vars were constructed using trusted types
-        case System(value, motive) =>
+        case System(value, motive, needsRestr) =>
           val faces = value.map(_._1)
-          if Face.sufficientlyRestricted(faces)
+          if !needsRestr || Face.sufficientlyRestricted(faces)
           then
             // check that the motive is well-formed
             checkInferType(motive) match
@@ -739,7 +746,7 @@ object TypeChecking {
             // check that the system itself is OK
             val iPh = PhantomInterval.fresh()
             val (phYpe, phSys) = typeAndSystem(iPh)
-            checkInferType(phSys) match
+            checkInferType(phSys.copy(requiresFullRestriction = false)) match
               case InferResult.Ok(phSysTpe) =>
                 if eqNormalazing(phYpe, phSysTpe)
                 then // system itself OK, check a0:A(I0)
