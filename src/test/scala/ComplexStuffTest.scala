@@ -2,7 +2,7 @@ package pl.wojciechkarpiel.szemek
 
 import Interval.{Min, One, Zero}
 import Term.*
-import TypeChecking.V2.{InferResult, eqNormalizingNoCheck}
+import TypeChecking.V2.{InferResult, checkInferType, eqNormalizingNoCheck}
 import TypeChecking.{V2, fullyNormalizeNoCheck}
 import core.Face
 
@@ -43,6 +43,26 @@ class ComplexStuffTest extends AnyFunSuiteLike {
       case InferResult.Ok(tpe) =>
         assert(eqNormalizingNoCheck(tpe, NatType)(ctx))
         assert(fullyNormalizeNoCheck(kan1, ctx) == Suc(NatZero))
+      case InferResult.Fail(msg) => fail(msg)
+  }
+
+
+  ignore("transport & logistics") {
+    val a0 = GlobalVar(Id("a0"))
+    val aP = GlobalVar(Id("A"))
+
+    val ctx = Context.Empty
+      .add(aP.id, PathType(_ => NatType, NatZero, Suc(NatZero)))
+      .add(a0.id, TypedTerm(NatZero, NatZero))
+    val t = transport(i => PathElimination(aP, i), a0)
+
+    checkInferType(t, ctx) match
+      case InferResult.Ok(tpe) =>
+        assert(tpe == PathElimination(aP, One))
+        // TODO should this normalize?
+        //      with empty system it's non-reducible, because reduction for comp depends on system
+        //      yet in papaer they say CTT is strongly normalizing
+        assert(eqNormalizingNoCheck(t, Suc(NatZero))(ctx))
       case InferResult.Fail(msg) => fail(msg)
   }
 }

@@ -112,8 +112,8 @@ private[parser] class CubicalTypeTheoryParser(val input: ParserInput) extends Pa
     "Snd(" ~ WS ~ Term ~ WS ~ ")" ~> (pair => SndTerm(pair))
   }
 
-  def ParensExpr: Rule1[Term] = rule {
-    '(' ~ WS ~ Term ~ WS ~ ')'
+  private def ParensExpr: Rule1[Term] = rule {
+    '(' ~ WS ~ Term ~ WS ~ ')' ~> ((t: Term) => NonHoasTerm.Parened(t))
   }
 
   private def VariableExpr: Rule1[Term] = rule {
@@ -156,7 +156,7 @@ private[parser] object ParserStarter {
         var ctx = Ctx.Empty
         ctxt.foreach((k, v) => ctx = ctx.addT(k, v))
         pathCtx.foreach((k, v) => ctx = ctx.addI(k, v))
-        ParsingAstTransformer.transform(result, ctx)
+        ParsingAstTransformer.transform(ParsingAstTransformer.fixAppAssociation(result), ctx)
       case Failure(e: ParseError) =>
         throw sys.error(parser.formatError(e, new ErrorFormatter(showTraces = true)))
       case Failure(e) => throw e

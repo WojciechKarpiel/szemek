@@ -120,7 +120,7 @@ class TypeCheckingTest extends AnyFunSuiteLike {
 
     V2.checkInferType(PathType(_ => A, a, b), ctxZeZlymB) match
       case InferResult.Ok(tpe) => fail(s"should fail, was $tpe")
-      case InferResult.Fail(msg) => assert(msg == s"Path were expected to start with GlobalVar(Id(A)) and end with GlobalVar(Id(A)), but is starting with GlobalVar(Id(A)) and ending with GlobalVar(Id(B))")
+      case InferResult.Fail(msg) => assert(msg == s"Path were expected to start with A and end with A, but is starting with A and ending with B")
 
     val inferredNonNormal = inferType(term, ctx)
     val inferredRed = fullyNormalize(inferredNonNormal, ctx)

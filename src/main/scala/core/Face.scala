@@ -18,7 +18,7 @@ object Face:
   // TODO imlement it
 
   /** Γ |- ϕ1 ∨ · · · ∨ ϕn = 1F : F. */
-  def sufficientlyRestricted(f: Seq[Face]): Boolean = {
+  def sufficientlyRestricted(f: Seq[Face]): Boolean = /* f.isEmpty|| */ {
 
     val f2 = f.map(reduce)
     val zerod = mutable.Set[Interval]()

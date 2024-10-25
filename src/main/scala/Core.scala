@@ -73,7 +73,9 @@ object Term:
     }
   }
 
-  final case class Application(fun: Term, arg: Term) extends Term
+  final case class Application(fun: Term, arg: Term) extends Term {
+    override def toString: String = s"$fun($arg)"
+  }
 
   // Sigma type
   final case class PairIntro(fst: Term, snd: Term, sndMotive: Term => Term) extends Term {
@@ -170,10 +172,20 @@ object Term:
   }
 
   // V class aria
-  final case class GlobalVar(id: Id) extends Term
+  final case class GlobalVar(id: Id) extends Term {
+    override def toString: String = id.value
+  }
+
+  object GlobalVar {
+    def app(id: String): GlobalVar = GlobalVar(Id(id))
+  }
+
+  object GV {
+    def apply(id: String): GlobalVar = GlobalVar(Id(id))
+  }
 
   final case class PhantomVarOfType(tpe: Term, id: Int = Counter.Constant) extends Term {
-    override def toString: String = s"φ($tpe, $id)" // Φφ
+    override def toString: String = s"φ$id" // Φφ
   }
 
   object PhantomVarOfType {
@@ -214,6 +226,12 @@ object Term:
       (trm, sys.copy(value = sys.value ++ Seq((Face.EqZero(i), a0))))
   )
 
+  def transport(A: Interval => Term, a0: Term): Term =
+    // empty system shouldn't work bro
+    Composition(a0, i => (A(i), System(Seq(), A(i))))
+
+// TODO section 4.5 eq for comp
+
 
 enum Interval:
   case Zero
@@ -233,7 +251,7 @@ object PhantomInterval {
 }
 
 object PhI {
-  def fresh() = PhantomInterval.fresh()
+  def fresh(): Interval = PhantomInterval.fresh()
 }
 
 object Interval {

@@ -29,6 +29,10 @@ private[parser] object NonHoasTerm {
   // Adjusted AST for parsing purposes
   sealed trait Term
 
+  case class Parened(term: Term) extends Term {
+    override def toString: String = s"($term)"
+  }
+
   case class LambdaTerm(varName: String, argType: Term, body: Term) extends Term {
     override def toString: String = s"λ$varName: $argType => $body"
   }
@@ -113,7 +117,42 @@ private object ParsingAstTransformer {
   }
 
 
+  private def chaseApplications(curr: NonHoasTerm.Term, sq: Seq[NonHoasTerm.Term]): NonHoasTerm.Term = curr match
+    case NonHoasTerm.ApplicationTerm(fun, arg) => chaseApplications(arg, sq :+ fun)
+    // todo support path here?
+    case other =>
+      val s = sq :+ other
+      s.reduce(NonHoasTerm.ApplicationTerm.apply)
+
+
+  // should be done at parsing time but im too retarded
+  def fixAppAssociation(term: NonHoasTerm.Term): NonHoasTerm.Term = term match
+    case NonHoasTerm.LambdaTerm(varName, argType, body) => NonHoasTerm.LambdaTerm(varName, fixAppAssociation(argType), fixAppAssociation(body))
+    case NonHoasTerm.PiTypeTerm(varName, argType, body) => NonHoasTerm.PiTypeTerm(varName, fixAppAssociation(argType), fixAppAssociation(body))
+    case a@NonHoasTerm.ApplicationTerm(fun, arg) => chaseApplications(a, Seq())
+    //      fixAppAssociation(arg) match
+    //        case NonHoasTerm.ApplicationTerm(fun2, arg2) =>
+    //          val fnFixd = fixAppAssociation(fun)
+    //          NonHoasTerm.ApplicationTerm(NonHoasTerm.ApplicationTerm(fnFixd, (fun2)), (arg2))
+    //        case NonHoasTerm.PathEliminationTerm(fun2, arg2) => NonHoasTerm.PathEliminationTerm(NonHoasTerm.ApplicationTerm(fixAppAssociation(fun), (fun2)), (arg2))
+    //        case other => NonHoasTerm.ApplicationTerm(fixAppAssociation(fun), other)
+    case NonHoasTerm.PathEliminationTerm(term, arg) => NonHoasTerm.PathEliminationTerm(fixAppAssociation(term), arg)
+    case NonHoasTerm.PairIntroTerm(fst, snd, sndMotive) => NonHoasTerm.PairIntroTerm(fixAppAssociation(fst), fixAppAssociation(snd), fixAppAssociation(sndMotive))
+    case NonHoasTerm.PairTypeTerm(varName, fstType, sndType) => NonHoasTerm.PairTypeTerm(varName, fixAppAssociation(fstType), fixAppAssociation(sndType))
+    case NonHoasTerm.FstTerm(pair) => NonHoasTerm.FstTerm(fixAppAssociation(pair))
+    case NonHoasTerm.SndTerm(pair) => NonHoasTerm.SndTerm(fixAppAssociation(pair))
+    case NonHoasTerm.NatZeroTerm => NonHoasTerm.NatZeroTerm
+    case NonHoasTerm.SucTerm(n) => NonHoasTerm.SucTerm(fixAppAssociation(n))
+    case NonHoasTerm.NatTypeTerm => NonHoasTerm.NatTypeTerm
+    case NonHoasTerm.PathTypeTerm(varName, tpe, start, end) => NonHoasTerm.PathTypeTerm(varName, fixAppAssociation(tpe), fixAppAssociation(start), fixAppAssociation(end))
+    case NonHoasTerm.PathAbstractionTerm(varName, body, location) => NonHoasTerm.PathAbstractionTerm(varName, fixAppAssociation(body), location)
+    case NonHoasTerm.UniverseTerm => NonHoasTerm.UniverseTerm
+    case NonHoasTerm.GlobalVarTerm(name) => NonHoasTerm.GlobalVarTerm(name)
+    case NonHoasTerm.VariableTerm(name, location) => NonHoasTerm.VariableTerm(name, location)
+    case NonHoasTerm.Parened(value) => NonHoasTerm.Parened(fixAppAssociation(value))
+
   def transform(term: NonHoasTerm.Term, ctx: Ctx): Term = term match
+    case NonHoasTerm.Parened(t) => transform(t, ctx)
     case NonHoasTerm.UniverseTerm => Universe
     case NonHoasTerm.FstTerm(pair) => Fst(transform(pair, ctx))
     case NonHoasTerm.SndTerm(pair) => Snd(transform(pair, ctx))

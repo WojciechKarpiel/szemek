@@ -49,22 +49,26 @@ class ParserTest extends AnyFunSuiteLike {
     }
   }
 
-  ignore("Nested app - noparens") {
+  test("Nested app - noparens") {
     val q = Term.GlobalVar(Id("q"))
     val x = Term.GlobalVar(Id("x"))
     val y = Term.GlobalVar(Id("y"))
-    val ctx = Map("q" -> q, "x" -> x, "y" -> y)
-    val parsed = ParserStarter.parseQ("q x y", ctx, Map.empty)
-    assert(parsed == Application(Application(q, x), y))
+    val z = Term.GlobalVar(Id("z"))
+    val ctx = Map("q" -> q, "x" -> x, "y" -> y, "z" -> z)
+    assert(ParserStarter.parseQ("q x y z", ctx, Map.empty) == Application(Application(Application(q, x), y), z))
+    assert(ParserStarter.parseQ("q x y", ctx, Map.empty) == Application(Application(q, x), y))
   }
+
   test("Nested app - parens ") {
     val q = Term.GlobalVar(Id("q"))
     val x = Term.GlobalVar(Id("x"))
     val y = Term.GlobalVar(Id("y"))
-    val ctx = Map("q" -> q, "x" -> x, "y" -> y)
+    val z = Term.GlobalVar(Id("z"))
+    val ctx = Map("q" -> q, "x" -> x, "y" -> y, "z" -> z)
     assert(ParserStarter.parseQ("(q x) ", ctx, Map.empty) == Application(q, x))
     assert(ParserStarter.parseQ("(q x) y", ctx, Map.empty) == Application(Application(q, x), y))
     assert(ParserStarter.parseQ("q (x y)", ctx, Map.empty) == Application(q, Application(x, y)))
+    assert(ParserStarter.parseQ("q (x y) z", ctx, Map.empty) == Application(Application(q, Application(x, y)), z))
     assertThrows[RuntimeException](ParserStarter.parseQ("q (x y", ctx, Map.empty))
   }
 }
