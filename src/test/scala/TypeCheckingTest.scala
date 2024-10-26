@@ -7,6 +7,7 @@ import TypeChecking.V2.{InferResult, NonReducingCheckerInferrer, checkInferType,
 import TypeChecking.{V2, fullyNormalize, inferType, whfNoCheck, whf as rewriteRule}
 import core.Face
 import core.Face.EqZero
+import parser.Parser
 
 import org.scalatest.funsuite.AnyFunSuiteLike
 
@@ -15,7 +16,7 @@ class TypeCheckingTest extends AnyFunSuiteLike {
   extension (c: InferResult)
     def tpe: Term = c match
       case InferResult.Ok(tpe) => tpe
-      case InferResult.Fail(msg) => throw new RuntimeException(s"Expected Ok, got Fail: $msg")
+      case f: Fail => throw new RuntimeException(s"Expected Ok, got Fail: ${f.toString}")
 
   test("reducing eta non trivial cases") {
 
@@ -120,7 +121,7 @@ class TypeCheckingTest extends AnyFunSuiteLike {
 
     V2.checkInferType(PathType(_ => A, a, b), ctxZeZlymB) match
       case InferResult.Ok(tpe) => fail(s"should fail, was $tpe")
-      case InferResult.Fail(msg) => assert(msg == s"Path were expected to start with A and end with A, but is starting with A and ending with B")
+      case f: Fail => assert(f.toString == s"Path were expected to start with A and end with A, but is starting with A and ending with B")
 
     val inferredNonNormal = inferType(term, ctx)
     val inferredRed = fullyNormalize(inferredNonNormal, ctx)
@@ -193,8 +194,7 @@ class TypeCheckingTest extends AnyFunSuiteLike {
           PairIntro(b, p, x => PathType(_ => A, a, x))
         )
         assert(red == expected)
-      case InferResult.Fail(msg) =>
-        fail(msg)
+      case f: InferResult.Fail => fail(f.toString)
   }
 
   test("basic system") {
@@ -309,5 +309,27 @@ class TypeCheckingTest extends AnyFunSuiteLike {
     val l3l = fullyNormalize(trm, ctx)
     assert(l3l == c)
     assert(V2.checkInferType(trm, ctx).tpe == A)
+  }
+
+  test("Failure trace") {
+    val term = Parser.parse("S(S(Universe))")
+    assert(term == Suc(Suc(Universe)))
+    checkInferType(term) match
+      case Ok(tpe) => fail(s"Expected typechecking to fail, but it succeeded with $tpe")
+      case fail: Fail => assert(fail.toString ==
+        """Failure trace:
+          | Suc argument doesn't typecheck
+          | Suc argument is not a Nat, but: |U| of type |U|
+          |""".stripMargin)
+  }
+
+  test("Wrong patht ype") {
+    val trm = Parser.parse("Path i -> Universe 0 S(0)")
+
+    assert(trm == PathType(_ => Universe, NatZero, Suc(NatZero)))
+    checkInferType(trm) match
+      case Ok(tpe) => fail(s"Expected to fail but got $tpe")
+      case fail: Fail => assert(fail.toString == "Path were expected to start with |U| and end with |U|, but is starting with ℕ and ending with ℕ")
+
   }
 }

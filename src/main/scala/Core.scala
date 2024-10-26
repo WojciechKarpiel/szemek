@@ -342,12 +342,35 @@ object TypeChecking {
 
 
     object InferResult {
-      def wrapFailure(f: Fail, msg: String): Fail = f.wrap(msg)
+      def wrapFailure(deeper: Fail, newFailure: Fail): Fail = deeper match
+        case FailTrace(trace) => FailTrace(newFailure :: trace)
+        case s: SingleFailure => FailTrace(newFailure :: List(s))
+
+      def wrapFailure(f: Fail, msg: String): Fail = wrapFailure(f, SingleFailure(msg))
 
       final case class Ok(tpe: Term) extends InferResult
 
-      final case class Fail(msg: String = "nie udalo siw ogarnqt' jytia") extends InferResult {
-        def wrap(msg: String): Fail = Fail(s"$msg, spovodovane priez: ${this.msg}")
+      sealed trait Fail extends InferResult {
+        def addToTrace(newFailure: Fail): Fail = InferResult.wrapFailure(this: Fail, newFailure)
+
+        def addToTrace(newFailure: String): Fail = addToTrace(Fail(newFailure))
+      }
+
+      object Fail {
+        def apply(msg: String): Fail = SingleFailure(msg)
+      }
+
+      final case class FailTrace(trace: List[Fail]) extends Fail {
+        override def toString: String = {
+          val sb = new StringBuilder()
+          sb.append("Failure trace:\n")
+          trace.foreach(f => sb.append(" ").append(f.toString).append("\n"))
+          sb.result()
+        }
+      }
+
+      final case class SingleFailure(msg: String) extends Fail {
+        override def toString: String = msg
       }
     }
 
@@ -559,10 +582,15 @@ object TypeChecking {
        */
       def checkInferType(term: Term): InferResult = term match
         case Term.NatZero => Ok(NatType)
-        case Suc(n) => if checkInferType(n) == Ok(NatType) then Ok(NatType) else Fail()
+        case Suc(n) =>
+          checkInferType(n) match
+            case Ok(NatType) => Ok(NatType)
+            case Ok(tpe) => Fail(s"Suc argument is not a Nat, but: $n of type $tpe")
+            case fail: Fail => fail.addToTrace(Fail("Suc argument doesn't typecheck"))
+        ///== Ok(NatType) then Ok(NatType) else Fail(s"")
         case GlobalVar(id) => ctx.get(id).map(t => Ok(t.tpe)).getOrElse(Fail(s"variable $id not found"))
         case Lambda(argType, abs) =>
-          if checkInferType(argType) != Ok(Universe) then Fail()
+          if checkInferType(argType) != Ok(Universe) then Fail(s"Lambda arg: $argType is not of type univ")
           else {
             val arg = PhantomVarOfType.fresh(argType)
             val bodyInstantiated = abs(arg)
@@ -572,11 +600,11 @@ object TypeChecking {
               case f: InferResult.Fail => f
           }
         case PiType(argType, abs) =>
-          if checkInferType(argType) != Ok(Universe) then Fail()
+          if checkInferType(argType) != Ok(Universe) then Fail(s"Pi argtype is not of type univ itself: $argType")
           else {
             val arg = PhantomVarOfType.fresh(argType)
             val bodyInstantiated = abs(arg)
-            if checkInferType(bodyInstantiated) != Ok(Universe) then Fail()
+            if checkInferType(bodyInstantiated) != Ok(Universe) then Fail(s"Pi bodytype is not of type univ itself: $bodyInstantiated (instantiated with $arg)")
             else Ok(Universe)
           }
         case Application(fun, arg) =>
@@ -585,9 +613,9 @@ object TypeChecking {
               checkInferType(arg) match
                 case InferResult.Ok(inferredArgType) =>
                   if eqNormalizingNoCheck(inferredArgType, argType)(ctx) then Ok(abs(arg))
-                  else Fail()
+                  else Fail("Application: argument type mismatch")
                 case f: InferResult.Fail => f
-            case InferResult.Ok(_) => Fail()
+            case InferResult.Ok(_) => Fail("Trying to app non function")
             case f: InferResult.Fail => f
         case PairIntro(fst, snd, sndMotive) =>
           checkInferType(fst) match
@@ -619,7 +647,7 @@ object TypeChecking {
           checkInferType(pair) match
             case Ok(PairType(a, _)) => Ok(a)
             case Ok(other) => Fail(s"expected pair, got $other")
-            case f: Fail => f.wrap("how can i take fst of this")
+            case f: Fail => f.addToTrace("how can i take fst of this")
         case Snd(pair) =>
           checkInferType(pair) match
             case Ok(PairType(_, sndtpe)) =>
@@ -627,7 +655,7 @@ object TypeChecking {
                 case PairIntro(fst, _, _) => Ok(sndtpe(fst))
                 case other => Fail(s"cannot know second typeif no fst value: $other")
             case Ok(other) => Fail(s"expected pair, got $other")
-            case f: Fail => f.wrap("how can i take snd of this")
+            case f: Fail => f.addToTrace("how can i take snd of this")
         case NatRecursion(motive, forZero, forNext) =>
           // Check that motive is a legit type
           val x = PhantomVarOfType.fresh(NatType)
@@ -666,7 +694,8 @@ object TypeChecking {
         case Term.NatType => Ok(Universe)
         case PathType(tpe, start, end) =>
           val i = PhantomInterval.fresh()
-          checkInferType(tpe(i)) match
+          val instantiatedType = tpe(i)
+          checkInferType(instantiatedType) match
             case InferResult.Ok(Universe) =>
               checkInferType(start) match
                 case InferResult.Ok(startType) =>
@@ -680,7 +709,7 @@ object TypeChecking {
                       else Fail(s"Path were expected to start with $expectedStartType and end with $expectedEndType, but is starting with $startType and ending with $endType")
                     case f: InferResult.Fail => f
                 case f: InferResult.Fail => f
-            case InferResult.Ok(_) => Fail()
+            case InferResult.Ok(other) => Fail(s"type of path is not actuially a type: $instantiatedType (instantiated with $i), but $other")
             case f: InferResult.Fail => f
         case PathAbstraction(abs, metadata) =>
           val i = PhantomInterval.fresh()
@@ -797,5 +826,5 @@ object TypeChecking {
 
   def inferType(term: Term, ctx: Context): Term = V2.checkInferType(term, ctx) match
     case InferResult.Ok(tpe) => tpe
-    case InferResult.Fail(msg) => throw new TypeCheckFailedException(msg)
+    case f: InferResult.Fail => throw new TypeCheckFailedException(f.toString)
 }

@@ -24,7 +24,7 @@ private[parser] class CubicalTypeTheoryParser(val input: ParserInput) extends Pa
   }
 
   private def TopLevelTerm: Rule1[Term] = rule {
-    LambdaExpr | PiTypeExpr | PathAbstractionExpr |
+    LambdaExpr | PiTypeExpr | PathAbstractionExpr | PathTypeExpr |
       NatZeroExpr | SucExpr | NatTypeExpr | UniverseExpr | PairIntroExpr | PairTypeExpr |
       FstExpr | SndExpr | ApplicationExpr | ParensExpr | VariableExpr
   }
@@ -40,6 +40,10 @@ private[parser] class CubicalTypeTheoryParser(val input: ParserInput) extends Pa
   def LambdaExpr: Rule1[Term] = rule {
     'λ' ~ WS ~ Identifier ~ WS ~ ':' ~ WS ~ Term ~ WS ~ "=>" ~ WS ~ Term ~> ((id: String, argType: Term, body: Term) =>
       LambdaTerm(id, argType, body))
+  }
+
+  private def PathTypeExpr: Rule1[Term] = rule {
+    "Path" ~ WS ~ Identifier ~ WS ~ "->" ~ WS ~ Term ~ WS ~ Term ~ WS ~ Term ~ WS ~> ((varName: String, tpe: Term, start: Term, end: Term) => PathTypeTerm(varName, tpe, start, end))
   }
 
   def PathAbstractionExpr: Rule1[Term] = rule {

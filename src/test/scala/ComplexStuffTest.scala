@@ -29,21 +29,21 @@ class ComplexStuffTest extends AnyFunSuiteLike {
     V2.checkInferType(arbitraryKan, ctx) match
       case InferResult.Ok(tpe) =>
         assert(eqNormalizingNoCheck(tpe, PathElimination(aP, Min(One, k)))(ctx))
-      case InferResult.Fail(msg) => fail(msg)
+      case f: InferResult.Fail => fail(f.toString)
     // 2. Check reduction of Kan0
     val kan0 = kn(Zero)
     V2.checkInferType(kan0, ctx) match
       case InferResult.Ok(tpe) =>
         assert(eqNormalizingNoCheck(tpe, NatType)(ctx))
         assert(fullyNormalizeNoCheck(kan0, ctx) == NatZero)
-      case InferResult.Fail(msg) => fail(msg)
+      case f: InferResult.Fail => fail(f.toString)
     // 3. Check reduction of Kan1
     val kan1 = kn(One)
     V2.checkInferType(kan1, ctx) match
       case InferResult.Ok(tpe) =>
         assert(eqNormalizingNoCheck(tpe, NatType)(ctx))
         assert(fullyNormalizeNoCheck(kan1, ctx) == Suc(NatZero))
-      case InferResult.Fail(msg) => fail(msg)
+      case f: InferResult.Fail => fail(f.toString)
   }
 
   test("transport & logistics") {
@@ -62,6 +62,6 @@ class ComplexStuffTest extends AnyFunSuiteLike {
         // https://claude.ai/chat/00ece1d5-ac4f-4bc2-9996-c690183bc44d
         // claude says this is the way but i don't like it
         assert(fullyNormalizeNoCheck(t, ctx).isInstanceOf[Composition])
-      case InferResult.Fail(msg) => fail(msg)
+      case f: InferResult.Fail => fail(f.toString)
   }
 }
