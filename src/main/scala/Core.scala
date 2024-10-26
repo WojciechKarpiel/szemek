@@ -119,7 +119,25 @@ object Term:
     override def toString: String = s"S($n)"
   }
 
-  final case class NatRecursion(motive: Term => Term, forZero: Term, forNext: Term) extends Term
+  final case class NatRecursion(motive: Term => Term, forZero: Term, forNext: Term) extends Term {
+    override def toString: String = {
+      val a = PhantomVarOfType.fresh(NatType)
+      s"NatRec($a => ${motive(a)}, $forZero, $forNext)"
+    }
+
+    override def equals(obj: Any): Boolean = obj != null && {
+      obj match
+        case NatRecursion(otherMotive, otherForZero, otherForNext) =>
+          val arg = PhantomVarOfType.fresh(NatType)
+          motive(arg) == otherMotive(arg) && forZero == otherForZero && forNext == otherForNext
+        case _ => false
+    }
+
+    override def hashCode(): Int = {
+      val arg = PhantomVarOfType.constant(NatType)
+      Seq(motive(arg), forZero, forNext).hashCode()
+    }
+  }
 
   final case class NatRecApply(natRec: Term, nat: Term) extends Term
 
@@ -437,27 +455,27 @@ object TypeChecking {
         case Composition(a0, typeAnSystem) => ???
     }
 
-    private class Replacer(existsNow: PhantomVarOfType, shouldExist: Term) {
+    class Replacer(existsNow: PhantomVarOfType, shouldExist: Term) {
       def apply(term: Term): Term = term match
-        case Lambda(argType, abs) => ???
+        case Lambda(argType, abs) => Lambda(apply(argType), x => apply(abs(x)))
         case PiType(argType, abs) => PiType(apply(argType), x => apply(abs(x)))
-        case Application(fun, arg) => ???
-        case PairIntro(fst, snd, sndMotive) => ???
-        case PairType(fstTpe, sndTpe) => ???
-        case Fst(pair) => ???
-        case Snd(pair) => ???
-        case Term.NatZero => ???
-        case Suc(n) => ???
-        case NatRecursion(motive, forZero, forNext) => ???
-        case NatRecApply(natRec, nat) => ???
+        case Application(fun, arg) => Application(apply(fun), apply(arg))
+        case PairIntro(fst, snd, sndMotive) => PairIntro(apply(fst), apply(snd), x => apply(sndMotive(x)))
+        case PairType(fstTpe, sndTpe) => PairType(apply(fstTpe), x => apply(sndTpe(x)))
+        case Fst(pair) => Fst(apply(pair))
+        case Snd(pair) => Snd(apply(pair))
+        case Term.NatZero => NatZero
+        case Suc(n) => Suc(apply(n))
+        case NatRecursion(motive, forZero, forNext) => NatRecursion(x => apply(motive(x)), apply(forZero), apply(forNext))
+        case NatRecApply(natRec, nat) => NatRecApply(apply(natRec), apply(nat))
         case Term.NatType => NatType
-        case PathType(tpe, start, end) => ???
-        case PathAbstraction(abs, metadata) => ???
-        case PathElimination(term, arg) => ???
-        case Term.Universe => ???
+        case PathType(tpe, start, end) => PathType(i => apply(tpe(i)), apply(start), apply(end))
+        case PathAbstraction(abs, metadata) => PathAbstraction(i => apply(abs(i)), metadata)
+        case PathElimination(term, arg) => PathElimination(apply(term), arg)
+        case Term.Universe => Universe
         case g: GlobalVar => g
         case p: PhantomVarOfType => if p == existsNow then shouldExist else p
-        case System(value, motive, _) => ???
+        case System(value, motive, l3l) => ???
         case Composition(a0, typeAndSystem) => ???
     }
 
@@ -513,6 +531,8 @@ object TypeChecking {
           case Application(fun, arg) =>
             whnfNoCheck(fun) match
               case ReductionResult(Lambda(_, abs), _) => changed(abs(arg))
+              case ReductionResult(nRec: NatRecursion, _) =>
+                changed(NatRecApply(nRec, arg)) // promote app to nat-rec-app TODO: remove nat-rec-app as a sepoarate term
               case _ => unchanged
           case c: Composition =>
             c.typeAndSystem(One)._2.value.find(f => Face.reduce(f._1) == OneFace) match
@@ -669,9 +689,10 @@ object TypeChecking {
                       checkInferType(forNext) match
                         case InferResult.Ok(forNextTpe) =>
                           val expected = PiType(NatType, n => PiType(motive(n), _ => motive(Suc(n))))
-                          eqNormalizingNoCheck(forNextTpe, expected)(ctx) match
-                            case true => Ok(PiType(NatType, motive))
-                            case false => Fail("ForN type mismatch with motive")
+                          if eqNormalizingNoCheck(forNextTpe, expected)(ctx) then
+                            Ok(PiType(NatType, motive))
+                          else
+                            Fail(s"ForN type ${forNextTpe} mismatch with motiv $expected")
                         case f: InferResult.Fail => f
                     case false => Fail("Expected NatRec forZero to be of the motive type, but got: " + forZero + s" and motive is: ${motive(NatZero)}")
                 case f: InferResult.Fail => f

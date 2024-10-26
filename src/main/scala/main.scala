@@ -1,22 +1,21 @@
 package pl.wojciechkarpiel.szemek
 
+import TypeChecking.V2.InferResult
+import TypeChecking.{V2, fullyNormalizeNoCheck}
 import parser.Parser
 
 @main
 def main(): Unit = {
   import scala.io.StdIn.readLine
-
   val input = readLine("Enter the term to parse: ")
-  try {
-    val parsedTerm = Parser.parse(input)
-    val typeq = TypeChecking.inferType(parsedTerm, Context.Empty)
-    println(s"Type: $typeq")
-    val normalizedTerm = TypeChecking.fullyNormalize(parsedTerm, Context.Empty)
-    println(s"Normalized Term: $normalizedTerm")
-  } catch {
-    case e: Exception =>
-      println(s"Error: ${e.getMessage}")
-      throw e
-  }
+  val parsedTerm = Parser.parse(input)
+  val ctx = Context.Empty
+  V2.checkInferType(parsedTerm, ctx) match
+    case InferResult.Ok(tpe) => println("Type: " + tpe)
+      val r = fullyNormalizeNoCheck(parsedTerm, ctx)
+      println("Normalized: " + r)
+    case fail: InferResult.Fail =>
+      println("Type error: " + fail)
+      System.exit(1)
 }
 

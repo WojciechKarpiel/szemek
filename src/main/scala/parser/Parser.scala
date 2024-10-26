@@ -3,6 +3,8 @@ package parser
 
 import Term.*
 
+import pl.wojciechkarpiel.szemek.TypeChecking.V2
+
 
 object Parser {
 
@@ -96,6 +98,10 @@ private[parser] object NonHoasTerm {
   case class VariableTerm(name: String, location: NaiveLocation) extends Term {
     override def toString: String = name
   }
+
+  case class NatRecTerm(motive: LambdaTerm, base: Term, step: Term) extends Term {
+    override def toString: String = s"NatRec($motive, $base, $step)"
+  }
 }
 
 
@@ -150,6 +156,7 @@ private object ParsingAstTransformer {
     case NonHoasTerm.GlobalVarTerm(name) => NonHoasTerm.GlobalVarTerm(name)
     case NonHoasTerm.VariableTerm(name, location) => NonHoasTerm.VariableTerm(name, location)
     case NonHoasTerm.Parened(value) => NonHoasTerm.Parened(fixAppAssociation(value))
+    case NonHoasTerm.NatRecTerm(motive, base, step) => NonHoasTerm.NatRecTerm(fixAppAssociation(motive).asInstanceOf[NonHoasTerm.LambdaTerm], fixAppAssociation(base), fixAppAssociation(step))
 
   def transform(term: NonHoasTerm.Term, ctx: Ctx): Term = term match
     case NonHoasTerm.Parened(t) => transform(t, ctx)
@@ -161,8 +168,10 @@ private object ParsingAstTransformer {
     case NonHoasTerm.SucTerm(n) => Suc(transform(n, ctx))
     case NonHoasTerm.NatTypeTerm => NatType
     case NonHoasTerm.LambdaTerm(varName, argType, body) =>
-      // TODO force evaluation? instantiate with phantom?
-      Lambda(transform(argType, ctx), arg => transform(body, ctx.addT(varName -> arg)))
+      val argReal = transform(argType, ctx)
+      val arg = PhantomVarOfType(argReal)
+      val instantiated = transform(body, ctx.addT(varName -> arg)) // force instantiation eagerly
+      Lambda(argReal, argR => V2.Replacer(arg, argR).apply(instantiated))
     case NonHoasTerm.PiTypeTerm(varName, argType, body) =>
       PiType(transform(argType, ctx), arg => transform(body, ctx.addT(varName -> arg)))
     case NonHoasTerm.ApplicationTerm(fun, arg) =>
@@ -187,6 +196,12 @@ private object ParsingAstTransformer {
       PathElimination(transform(term, ctx), transformInterval(arg, ctx))
     case NonHoasTerm.VariableTerm(name, loc) =>
       guess(name, ctx).asInstanceOf[Term]
+    case NonHoasTerm.NatRecTerm(motive, base, step) =>
+      NatRecursion(
+        transform(motive, ctx).asInstanceOf[Lambda].abs, // todo ignores  type and fragile
+        transform(base, ctx),
+        transform(step, ctx)
+      )
 
   private def transformInterval(i: NonHoasTerm.Interval, vars: Ctx): Interval = i match
     case NonHoasTerm.Interval.Zero => Interval.Zero

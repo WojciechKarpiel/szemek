@@ -40,7 +40,7 @@ object TestGrammar {
 
   import scala.util.{Failure, Success, Try}
 
-  def main(args: Array[String]): Unit = {
+  def mainQ(args: Array[String]): Unit = {
     val parser = new TestGrammar("a b c d")
     val result: Try[Trm] = parser.In.run()
     result match {

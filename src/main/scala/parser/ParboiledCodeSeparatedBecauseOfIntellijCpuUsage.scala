@@ -25,7 +25,7 @@ private[parser] class CubicalTypeTheoryParser(val input: ParserInput) extends Pa
 
   private def TopLevelTerm: Rule1[Term] = rule {
     LambdaExpr | PiTypeExpr | PathAbstractionExpr | PathTypeExpr |
-      NatZeroExpr | SucExpr | NatTypeExpr | UniverseExpr | PairIntroExpr | PairTypeExpr |
+      NatZeroExpr | SucExpr | NatRecExpr | NatTypeExpr | UniverseExpr | PairIntroExpr | PairTypeExpr |
       FstExpr | SndExpr | ApplicationExpr | ParensExpr | VariableExpr
   }
 
@@ -38,12 +38,19 @@ private[parser] class CubicalTypeTheoryParser(val input: ParserInput) extends Pa
   private def Term: Rule1[Term] = rule(TopLevelTerm) // TODO delet
 
   def LambdaExpr: Rule1[Term] = rule {
-    'λ' ~ WS ~ Identifier ~ WS ~ ':' ~ WS ~ Term ~ WS ~ "=>" ~ WS ~ Term ~> ((id: String, argType: Term, body: Term) =>
+    ("λ" | "lam" | "fun" | "fn") ~ WS ~ Identifier ~ WS ~ ':' ~ WS ~ Term ~ WS ~ "=>" ~ WS ~ Term ~> ((id: String, argType: Term, body: Term) =>
       LambdaTerm(id, argType, body))
   }
 
   private def PathTypeExpr: Rule1[Term] = rule {
-    "Path" ~ WS ~ Identifier ~ WS ~ "->" ~ WS ~ Term ~ WS ~ Term ~ WS ~ Term ~ WS ~> ((varName: String, tpe: Term, start: Term, end: Term) => PathTypeTerm(varName, tpe, start, end))
+    "Path" ~ WS ~ PathAbstractionExpr ~ WS ~ Term ~ WS ~ Term ~ WS ~> ((tpe_ : Term, start: Term, end: Term) => {
+      val tpe = tpe_.asInstanceOf[PathAbstractionTerm]
+      PathTypeTerm(tpe.varName, tpe.body, start, end)
+    })
+  }
+
+  private def maybeParenedLamExpr: Rule1[Term] = rule {
+    ("(" ~ WS ~ LambdaExpr ~ ")" | LambdaExpr) ~ WS
   }
 
   def PathAbstractionExpr: Rule1[Term] = rule {
@@ -51,8 +58,12 @@ private[parser] class CubicalTypeTheoryParser(val input: ParserInput) extends Pa
       PathAbstractionTerm(id, body, NaiveLocation(start, end)))
   }
 
+  private def NatRecExpr: Rule1[Term] = rule {
+    "NatRec" ~ WS ~ maybeParenedLamExpr ~ WS ~ Term ~ WS ~ Term ~> ((motive: Term, base: Term, step: Term) => NatRecTerm(motive.asInstanceOf[LambdaTerm], base, step))
+  }
+
   def PiTypeExpr: Rule1[Term] = rule {
-    'Π' ~ WS ~ Identifier ~ WS ~ ':' ~ WS ~ Term ~ WS ~ "=>" ~ WS ~ Term ~> ((id: String, argType: Term, body: Term) =>
+    ("Π" | "Pi") ~ WS ~ Identifier ~ WS ~ ':' ~ WS ~ Term ~ WS ~ "=>" ~ WS ~ Term ~> ((id: String, argType: Term, body: Term) =>
       PiTypeTerm(id, argType, body))
   }
 
@@ -84,15 +95,15 @@ private[parser] class CubicalTypeTheoryParser(val input: ParserInput) extends Pa
   }
 
   def SucExpr: Rule1[Term] = rule {
-    "S(" ~ WS ~ Term ~ WS ~ ")" ~> (n => SucTerm(n))
+    "S" ~ WS ~ "(" ~ WS ~ Term ~ WS ~ ")" ~> (n => SucTerm(n))
   }
 
   def NatTypeExpr: Rule1[Term] = rule {
-    "NatType" ~ push(NatTypeTerm)
+    ("NatType" | "Nat" | "N") ~ WS ~ push(NatTypeTerm)
   }
 
   def UniverseExpr: Rule1[Term] = rule {
-    "Universe" ~ push(UniverseTerm)
+    ("Universe" | "U") ~ WS ~ push(UniverseTerm)
   }
 
   def PairIntroExpr: Rule1[Term] = rule {
@@ -104,7 +115,7 @@ private[parser] class CubicalTypeTheoryParser(val input: ParserInput) extends Pa
   }
 
   def PairTypeExpr: Rule1[Term] = rule {
-    'Σ' ~ WS ~ Identifier ~ WS ~ ':' ~ WS ~ Term ~ WS ~ "=>" ~ WS ~ Term ~> (
+    ("Σ" | "Sgm" | "Sigma") ~ WS ~ Identifier ~ WS ~ ':' ~ WS ~ Term ~ WS ~ "=>" ~ WS ~ Term ~> (
       (id: String, fstType: Term, sndType: Term) => PairTypeTerm(id, fstType, sndType))
   }
 
@@ -160,7 +171,9 @@ private[parser] object ParserStarter {
         var ctx = Ctx.Empty
         ctxt.foreach((k, v) => ctx = ctx.addT(k, v))
         pathCtx.foreach((k, v) => ctx = ctx.addI(k, v))
-        ParsingAstTransformer.transform(ParsingAstTransformer.fixAppAssociation(result), ctx)
+        val p = ParsingAstTransformer.fixAppAssociation(result)
+        val r = ParsingAstTransformer.transform(p, ctx)
+        r
       case Failure(e: ParseError) =>
         throw sys.error(parser.formatError(e, new ErrorFormatter(showTraces = true)))
       case Failure(e) => throw e

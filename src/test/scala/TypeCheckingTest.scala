@@ -324,12 +324,11 @@ class TypeCheckingTest extends AnyFunSuiteLike {
   }
 
   test("Wrong patht ype") {
-    val trm = Parser.parse("Path i -> Universe 0 S(0)")
+    val trm = Parser.parse("Path <i> Universe 0 S(0)")
 
     assert(trm == PathType(_ => Universe, NatZero, Suc(NatZero)))
     checkInferType(trm) match
       case Ok(tpe) => fail(s"Expected to fail but got $tpe")
       case fail: Fail => assert(fail.toString == "Path were expected to start with |U| and end with |U|, but is starting with ℕ and ending with ℕ")
-
   }
 }

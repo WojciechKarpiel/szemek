@@ -5,6 +5,7 @@ import Interval.*
 import Term.*
 
 import org.scalatest.funsuite.AnyFunSuiteLike
+import pl.wojciechkarpiel.szemek.TypeChecking.fullyNormalize
 
 class ParserTest extends AnyFunSuiteLike {
 
@@ -70,6 +71,31 @@ class ParserTest extends AnyFunSuiteLike {
     assert(ParserStarter.parseQ("q (x y)", ctx, Map.empty) == Application(q, Application(x, y)))
     assert(ParserStarter.parseQ("q (x y) z", ctx, Map.empty) == Application(Application(q, Application(x, y)), z))
     assertThrows[RuntimeException](ParserStarter.parseQ("q (x y", ctx, Map.empty))
+  }
+
+
+  test("NatRec") {
+    val ttwo = "NatRec (lam x:Nat => Nat) 0 (λn: NatType => lam ign:Nat => S(S(n)))"
+    //val timesTwo = Parser.parse(ttwo)
+    val two = "S(S(0))"
+
+    val validForms = Seq(
+      s"(($ttwo) $two)",
+      s"($ttwo) $two",
+      s"($ttwo) ($two)",
+      // these break
+      //      s"($ttwo $two)",
+      //      s"$ttwo $two",
+    )
+    val fourNonNorm = Parser.parse(validForms.head)
+    val four = fullyNormalize(fourNonNorm, Context.Empty)
+    assert(four == Suc(Suc(Suc(Suc(NatZero)))))
+
+    validForms.foreach(form => {
+      val parsed = Parser.parse(form)
+      assert(parsed == fourNonNorm)
+    })
+
   }
 }
 
