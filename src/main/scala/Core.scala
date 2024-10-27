@@ -2,7 +2,7 @@ package pl.wojciechkarpiel.szemek
 
 import Interval.{One, PhantomInterval, Zero}
 import Term.{Counter, PhantomVarOfType, Universe}
-import TypeChecking.V2.{InferResult, NonCheckingReducer, checkInferType}
+import TypeChecking.V2.{InferResult, NonCheckingReducer, checkInferType, eqNormalizingNoCheck}
 import core.Face
 import core.Face.{IntervalCongruence, OneFace}
 
@@ -317,6 +317,19 @@ class TypeCheckFailedException(msg: String = "nie udało się") extends RuntimeE
 
 class Context private(map: Map[Id, TypedTerm], restrictions: Seq[Face] = Seq()) {
   def add(id: Id, term: TypedTerm): Context = new Context(map + (id -> term), restrictions)
+
+  def addChecking(id: Id, term: TypedTerm): Context = {
+    checkInferType(term.tpe, this) match
+      case InferResult.Ok(Universe) =>
+        checkInferType(term.term, this) match
+          case InferResult.Ok(kek) =>
+            if eqNormalizingNoCheck(kek, term.tpe)(this) then
+              new Context(map + (id -> term), restrictions)
+            else
+              throw new TypeCheckFailedException(s"Type mismatch: $kek != ${term.tpe}")
+          case other => throw new TypeCheckFailedException(other.toString)
+      case other => throw new TypeCheckFailedException(other.toString)
+  }
 
   def restricted(f: Face): Context = new Context(map, restrictions :+ f)
 
@@ -819,7 +832,7 @@ object TypeChecking {
                           case None =>
                             // mind that except for the ingerred type, we also infere equalities unher phi to u(I1)
                             Ok(typeAndSystem(One)._1)
-                      else Fail("a0: A(0) is not true")
+                      else Fail(s"a0: A(0) is not true (a0: $a0, inferred: $a0InferredTpe, expected: $zerodTpe)")
                     case f: Fail => f
                 else Fail("Comp: System type not as expected")
               case f: Fail => f

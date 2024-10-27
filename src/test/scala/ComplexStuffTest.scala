@@ -46,22 +46,39 @@ class ComplexStuffTest extends AnyFunSuiteLike {
       case f: InferResult.Fail => fail(f.toString)
   }
 
-  test("transport & logistics") {
+  //  test("transport & logistics") {
+  //    val a0 = GlobalVar(Id("a0"))
+  //    val aP = GlobalVar(Id("A"))
+  //
+  //    val ctx = Context.Empty
+  //      .add(aP.id, PathType(_ => NatType, NatZero, Suc(NatZero))) // lol we assume existence of path between 0 and 1
+  //      .add(a0.id, TypedTerm(NatZero, NatType))
+  //    val t = transport(i => PathElimination(aP, i), a0)
+  //
+  //    checkInferType(t, ctx) match
+  //      case InferResult.Ok(tpe) =>
+  //        assert(tpe == PathElimination(aP, One))
+  //        // TODO make a test with real path and show that it reduces
+  //        assert(fullyNormalizeNoCheck(t, ctx).isInstanceOf[Composition])
+  //      case f: InferResult.Fail => fail(f.toString)
+  //  }
+
+  test("simple reducing transport") {
     val a0 = GlobalVar(Id("a0"))
     val aP = GlobalVar(Id("A"))
 
     val ctx = Context.Empty
-      .add(aP.id, PathType(_ => NatType, NatZero, Suc(NatZero)))
-      .add(a0.id, TypedTerm(NatZero, NatZero))
+      .addChecking(aP.id,
+        TypedTerm(PathAbstraction(_ => NatType),
+          PathType(_ => Universe, NatType, (NatType)))) // lol we assume existence of path between 0 and 1
+      .add(a0.id, TypedTerm(NatZero, NatType))
     val t = transport(i => PathElimination(aP, i), a0)
 
     checkInferType(t, ctx) match
       case InferResult.Ok(tpe) =>
         assert(tpe == PathElimination(aP, One))
-        // no normalisation here, otherwise it would prove 0=1
-        // https://claude.ai/chat/00ece1d5-ac4f-4bc2-9996-c690183bc44d
-        // claude says this is the way but i don't like it
-        assert(fullyNormalizeNoCheck(t, ctx).isInstanceOf[Composition])
+        // TODO how can this normalizw with an empty system
+        assert(fullyNormalizeNoCheck(t, ctx).isInstanceOf[Composition]) //want it to be nat0
       case f: InferResult.Fail => fail(f.toString)
   }
 }
