@@ -4,11 +4,14 @@ package parser
 import Term.*
 
 import pl.wojciechkarpiel.szemek.TypeChecking.V2
+import pl.wojciechkarpiel.szemek.parser.NonHoasTerm.TopLevel
+import pl.wojciechkarpiel.szemek.parser.Parser.ParseResultUnchecked
 
 
 object Parser {
+  final case class ParseResultUnchecked(term: Term, ctx: Context)
 
-  def parse(input: String): Term = ParserStarter.parse(input)
+  def parse(input: String): ParseResultUnchecked = ParserStarter.parse(input)
 }
 
 // TODO MOST THIS CODE AI-GENERATED, VERIFY
@@ -30,6 +33,10 @@ private[parser] object NonHoasTerm {
   
   // Adjusted AST for parsing purposes
   sealed trait Term
+
+  final case class MaybeTypedParseTerm(term: Term, tpe: Option[Term]) extends Term
+
+  case class TopLevel(defs: Seq[(String, MaybeTypedParseTerm)], term: Term) extends Term
 
   case class Parened(term: Term) extends Term {
     override def toString: String = s"($term)"
@@ -157,6 +164,24 @@ private object ParsingAstTransformer {
     case NonHoasTerm.VariableTerm(name, location) => NonHoasTerm.VariableTerm(name, location)
     case NonHoasTerm.Parened(value) => NonHoasTerm.Parened(fixAppAssociation(value))
     case NonHoasTerm.NatRecTerm(motive, base, step) => NonHoasTerm.NatRecTerm(fixAppAssociation(motive).asInstanceOf[NonHoasTerm.LambdaTerm], fixAppAssociation(base), fixAppAssociation(step))
+    case NonHoasTerm.TopLevel(defs, term) => NonHoasTerm.TopLevel(defs.map { case (name, term) => (name, NonHoasTerm.MaybeTypedParseTerm(fixAppAssociation(term.term), term.tpe.map(fixAppAssociation))) }, fixAppAssociation(term))
+
+  def transformTopLevel(term: TopLevel, inCtx_ : Ctx): ParseResultUnchecked = {
+    var inCtx = inCtx_
+    var resultCtx = Context.Empty
+    term.defs.foreach { case (name, NonHoasTerm.MaybeTypedParseTerm(term, tpe)) =>
+      val t = transform(term, inCtx)
+      val tt = transform(tpe.get, inCtx)
+      val id = Id(name)
+      resultCtx = resultCtx.add(id, TypedTerm(t, tt)) // no check here
+
+      inCtx = inCtx.addT(id.value -> GlobalVar(id))
+      (name -> t)
+    }
+
+    val term1 = transform(term.term, ctx = inCtx)
+    ParseResultUnchecked(term1, resultCtx)
+  }
 
   def transform(term: NonHoasTerm.Term, ctx: Ctx): Term = term match
     case NonHoasTerm.Parened(t) => transform(t, ctx)

@@ -2,6 +2,7 @@ package pl.wojciechkarpiel.szemek
 
 import Interval.{One, PhantomInterval, Zero}
 import Term.{Counter, PhantomVarOfType, Universe}
+import TypeChecking.V2.InferResult.Ok
 import TypeChecking.V2.{InferResult, NonCheckingReducer, checkInferType, eqNormalizingNoCheck}
 import core.Face
 import core.Face.{IntervalCongruence, OneFace}
@@ -11,8 +12,7 @@ import scala.annotation.tailrec
 
 final case class Id(value: String) extends AnyVal
 
-
-// TODO EQ and hashcode for the FN containing types
+// TODO eigenvals
 sealed trait Term
 
 object Term:
@@ -315,8 +315,12 @@ extension (i: Interval)
 
 class TypeCheckFailedException(msg: String = "nie udało się") extends RuntimeException(msg) /*with NoStackTrace*/
 
-class Context private(map: Map[Id, TypedTerm], restrictions: Seq[Face] = Seq()) {
-  def add(id: Id, term: TypedTerm): Context = new Context(map + (id -> term), restrictions)
+class Context private(map: List[(Id, TypedTerm)], restrictions: Seq[Face] = Seq()) {
+  override def toString: String = {
+    s"Ctx($map, $restrictions)"
+  }
+
+  def add(id: Id, term: TypedTerm): Context = new Context((id -> term) :: map, restrictions)
 
   def addChecking(id: Id, term: TypedTerm): Context = {
     checkInferType(term.tpe, this) match
@@ -324,7 +328,7 @@ class Context private(map: Map[Id, TypedTerm], restrictions: Seq[Face] = Seq()) 
         checkInferType(term.term, this) match
           case InferResult.Ok(kek) =>
             if eqNormalizingNoCheck(kek, term.tpe)(this) then
-              new Context(map + (id -> term), restrictions)
+              new Context((id -> term) :: map, restrictions)
             else
               throw new TypeCheckFailedException(s"Type mismatch: $kek != ${term.tpe}")
           case other => throw new TypeCheckFailedException(other.toString)
@@ -342,11 +346,15 @@ class Context private(map: Map[Id, TypedTerm], restrictions: Seq[Face] = Seq()) 
       case other => throw new TypeCheckFailedException(other.toString)
   }
 
-  def get(id: Id): Option[TypedTerm] = map.get(id)
+  def get(id: Id): Option[TypedTerm] = map.find(a => a._1 == id).map(_._2)
 
   def isEmpty: Boolean = map.isEmpty
 
-  def contains(id: Id): Boolean = map.contains(id)
+  def foreach(f: ((Id, TypedTerm)) => Unit): Unit = map.foreach(f)
+
+  def map[A](f: ((Id, TypedTerm)) => A): Unit = map.map(f)
+
+  def contains(id: Id): Boolean = get(id).isDefined
 
   lazy val intervalCongruence: IntervalCongruence = {
     var face = Face.OneFace
@@ -359,7 +367,7 @@ class Context private(map: Map[Id, TypedTerm], restrictions: Seq[Face] = Seq()) 
 }
 
 object Context {
-  val Empty: Context = new Context(Map())
+  val Empty: Context = new Context(List())
 }
 
 final case class TypedTerm(term: Term, tpe: Term)
@@ -861,4 +869,13 @@ object TypeChecking {
   def inferType(term: Term, ctx: Context): Term = V2.checkInferType(term, ctx) match
     case InferResult.Ok(tpe) => tpe
     case f: InferResult.Fail => throw new TypeCheckFailedException(f.toString)
+
+  // todo ignores restrictions
+  def checkCtx(ctx: Context): InferResult = {
+    var newCtx = Context.Empty
+    ctx.foreach {
+      case (id, tt) => newCtx = newCtx.addChecking(id, tt)
+    }
+    Ok(Universe)
+  }
 }

@@ -312,7 +312,7 @@ class TypeCheckingTest extends AnyFunSuiteLike {
   }
 
   test("Failure trace") {
-    val term = Parser.parse("S(S(Universe))")
+    val term = Parser.parse("S(S(Universe))").term
     assert(term == Suc(Suc(Universe)))
     checkInferType(term) match
       case Ok(tpe) => fail(s"Expected typechecking to fail, but it succeeded with $tpe")
@@ -324,7 +324,7 @@ class TypeCheckingTest extends AnyFunSuiteLike {
   }
 
   test("Wrong patht ype") {
-    val trm = Parser.parse("Path <i> Universe 0 S(0)")
+    val trm = Parser.parse("Path <i> Universe 0 S(0)").term
 
     assert(trm == PathType(_ => Universe, NatZero, Suc(NatZero)))
     checkInferType(trm) match
