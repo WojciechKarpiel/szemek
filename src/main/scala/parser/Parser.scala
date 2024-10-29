@@ -23,6 +23,16 @@ type Location = NaiveLocation // TODO better loc
 
 private[parser] object NonHoasTerm {
 
+  enum Face:
+    case ZeroFace
+    case OneFace
+    case EqZero(i: Interval)
+    case EqOne(i: Interval)
+    case FaceMin(f1: Face, f2: Face)
+    case FaceMax(f1: Face, f2: Face)
+    case NamedFace(name: String)
+
+
   enum Interval:
     case Zero
     case One
@@ -41,6 +51,11 @@ private[parser] object NonHoasTerm {
   case class Parened(term: Term) extends Term {
     override def toString: String = s"($term)"
   }
+
+  //case class System(value: Seq[(Face, Term)], motive: Term, requiresFullRestriction: Boolean = true /*hack to handle composition easier*/) extends Term {
+  final case class SystemTerm() extends Term
+
+  //case class Composition(a0: Term, typeAndSystem: Interval => (Term, System)) extends Term {
 
   case class LambdaTerm(varName: String, argType: Term, body: Term) extends Term {
     override def toString: String = s"λ$varName: $argType => $body"

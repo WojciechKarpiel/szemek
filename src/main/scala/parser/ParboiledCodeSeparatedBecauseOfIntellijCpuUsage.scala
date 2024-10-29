@@ -190,6 +190,38 @@ private[parser] class CubicalTypeTheoryParser(val input: ParserInput) extends Pa
 
   private def ZeroInterval: Rule1[NonHoasTerm.Interval] = rule("I0" ~ WS ~> (() => Zero))
 
+
+  def FaceStartForTest: Rule1[NonHoasTerm.Face] = rule {
+    FaceRule ~ WS ~ EOI
+  }
+
+  private def FaceRule: Rule1[NonHoasTerm.Face] = rule {
+    ZeroFaceRule | OneFaceRule | EqZeroFaceRule | EqOnwFaceRule | FaceMaxRule | FaceMinRule | NamedFaceRule
+  }
+
+  private def ZeroFaceRule: Rule1[NonHoasTerm.Face] = rule("F0" ~ WS ~> (() => NonHoasTerm.Face.ZeroFace))
+
+  private def OneFaceRule: Rule1[NonHoasTerm.Face] = rule("F1" ~ WS ~> (() => NonHoasTerm.Face.OneFace))
+
+  private def NamedFaceRule: Rule1[NonHoasTerm.Face] = rule(Identifier ~ WS ~> ((i: String) => NonHoasTerm.Face.NamedFace(i)))
+
+  // todo postfix
+  private def EqZeroFaceRule: Rule1[NonHoasTerm.Face] = rule("Feq0(" ~ WS ~ Interval ~ WS ~ ")" ~ WS ~> ((i: NonHoasTerm.Interval) => NonHoasTerm.Face.EqZero(i)))
+
+  private def EqOnwFaceRule: Rule1[NonHoasTerm.Face] = rule("Feq1(" ~ WS ~ Interval ~ WS ~ ")" ~ WS ~> ((i: NonHoasTerm.Interval) => NonHoasTerm.Face.EqOne(i)))
+
+  // todo infix
+  private def FaceMaxRule: Rule1[NonHoasTerm.Face] = rule(
+    "Fmax(" ~ WS ~ FaceRule ~ WS ~ "," ~ WS ~ FaceRule ~ WS ~ ")" ~ WS ~> (
+      (f1: NonHoasTerm.Face, f2: NonHoasTerm.Face) => NonHoasTerm.Face.FaceMax(f1, f2)
+      )
+  )
+
+  private def FaceMinRule: Rule1[NonHoasTerm.Face] = rule(
+    "Fmin(" ~ WS ~ FaceRule ~ WS ~ "," ~ WS ~ FaceRule ~ WS ~ ")" ~ WS ~> (
+      (f1: NonHoasTerm.Face, f2: NonHoasTerm.Face) => NonHoasTerm.Face.FaceMin(f1, f2)
+      )
+  )
 }
 
 

@@ -4,10 +4,14 @@ package parser
 import Interval.*
 import Term.*
 
+import org.parboiled2.ParseError
 import org.scalatest.funsuite.AnyFunSuiteLike
 import pl.wojciechkarpiel.szemek.TypeChecking.V2.InferResult
 import pl.wojciechkarpiel.szemek.TypeChecking.V2.InferResult.Ok
 import pl.wojciechkarpiel.szemek.TypeChecking.{checkCtx, fullyNormalize}
+import pl.wojciechkarpiel.szemek.parser.NonHoasTerm.Face.{EqOne, EqZero, FaceMax}
+
+import scala.util.{Failure, Success}
 
 class ParserTest extends AnyFunSuiteLike {
 
@@ -126,6 +130,30 @@ class ParserTest extends AnyFunSuiteLike {
     assert(checkCtx(parsed.ctx).isInstanceOf[Ok])
     assert(fullyNormalize(parsed.term, parsed.ctx) == Suc(Suc(Suc(Suc(NatZero)))))
   }
+
+  def assertFace(in: String, expected: NonHoasTerm.Face): Unit = {
+    new CubicalTypeTheoryParser(in).FaceStartForTest.run() match
+      case Failure(exception) => throw exception
+      case Success(value) => assert(value == expected)
+  }
+
+  test("Face parsing - dd") {
+    val eq0 = EqZero(NonHoasTerm.Interval.NamedInterval("i"))
+    val eq1 = EqOne(NonHoasTerm.Interval.NamedInterval("j"))
+    assertFace("Feq0(i)", eq0)
+    assertThrows[ParseError](assertFace("Fmax(Feq0(i)", eq0))
+    assertFace("Fmax(Feq0(i), Feq1(j))", FaceMax(eq0, eq1))
+    assertFace("Fmax(Feq1(I1), Feq0(~max(elo, I0)))", FaceMax(
+      EqOne(NonHoasTerm.Interval.One),
+      EqZero(NonHoasTerm.Interval.Opp(
+        NonHoasTerm.Interval.Max(
+          NonHoasTerm.Interval.NamedInterval("elo"),
+          NonHoasTerm.Interval.Zero
+        )
+      ))
+    ))
+  }
+
 
 }
 
