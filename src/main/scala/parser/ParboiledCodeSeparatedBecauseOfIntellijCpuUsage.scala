@@ -232,8 +232,8 @@ private[parser] class CubicalTypeTheoryParser(val input: ParserInput) extends Pa
   }
 
   private def CompRuleNoTrailingWs: Rule1[NonHoasTerm.Composition] = rule {
-    "Comp(" ~ WS ~ TopLevelTerm ~ WS ~ "," ~ WS ~ Identifier ~ WS ~ "->" ~ WS ~ SystemRuleNoTrailingWs ~ WS ~ ")" ~> (
-      (a0: NonHoasTerm.Term, id: String, s: SystemTerm) => NonHoasTerm.Composition(a0, id, s)
+    "Comp(" ~ WS ~ TopLevelTerm ~ WS ~ "," ~ WS ~ Identifier ~ WS ~ "->" ~ WS ~ TopLevelTermNoTrailingWs ~ WS ~ "," ~ WS ~ SystemRuleNoTrailingWs ~ WS ~ ")" ~> (
+      (a0: NonHoasTerm.Term, id: String, t: NonHoasTerm.Term, s: SystemTerm) => NonHoasTerm.Composition(a0, id, t, s)
       )
   }
 }

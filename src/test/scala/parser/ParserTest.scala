@@ -3,13 +3,14 @@ package parser
 
 import Interval.*
 import Term.*
+import TypeChecking.V2.InferResult
+import TypeChecking.V2.InferResult.Ok
+import TypeChecking.{checkCtx, fullyNormalize}
+import core.Face
+import parser.NonHoasTerm.Face.{EqOne, EqZero, FaceMax}
 
 import org.parboiled2.ParseError
 import org.scalatest.funsuite.AnyFunSuiteLike
-import pl.wojciechkarpiel.szemek.TypeChecking.V2.InferResult
-import pl.wojciechkarpiel.szemek.TypeChecking.V2.InferResult.Ok
-import pl.wojciechkarpiel.szemek.TypeChecking.{checkCtx, fullyNormalize}
-import pl.wojciechkarpiel.szemek.parser.NonHoasTerm.Face.{EqOne, EqZero, FaceMax}
 
 import scala.util.{Failure, Success}
 
@@ -163,14 +164,17 @@ class ParserTest extends AnyFunSuiteLike {
   }
 
   test("comp parse") {
-    // TODO rework to proper full parsing
-    val in = """Comp( 0 ,i -> [ Feq0(i) -> 0, F1 -> S(0) ]:Nat)"""
-    assert(CubicalTypeTheoryParser(in).InputLine.run().get.term ==
-      NonHoasTerm.Composition(NonHoasTerm.NatZeroTerm, "i",
-        NonHoasTerm.SystemTerm(Seq(
-          (NonHoasTerm.Face.EqZero(NonHoasTerm.Interval.NamedInterval("i")), NonHoasTerm.NatZeroTerm),
-          (NonHoasTerm.Face.OneFace, NonHoasTerm.SucTerm(NonHoasTerm.NatZeroTerm))
-        ), NonHoasTerm.NatTypeTerm)))
+    val in = """Comp( 0 , i -> (Nat) i, [ Feq0(i) -> 0, F1 -> S(0) ]:Nat)"""
+    val trm = Parser.parse(in).term
+    assert(trm == Composition(NatZero, { i =>
+      val tpe: Term = PathElimination(NatType, i) // makes no sense but i want to test if "i" is handled correctly
+      val sys: System = System(Seq(
+        (Face.EqZero(i), NatZero),
+        (Face.OneFace, Suc(NatZero))
+      ), NatType)
+
+      (tpe, sys)
+    }))
   }
 
 }

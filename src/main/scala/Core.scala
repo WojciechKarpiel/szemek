@@ -5,7 +5,9 @@ import Term.{Counter, PhantomVarOfType, Universe}
 import TypeChecking.V2.InferResult.Ok
 import TypeChecking.V2.{InferResult, NonCheckingReducer, checkInferType, eqNormalizingNoCheck}
 import core.Face
-import core.Face.{IntervalCongruence, OneFace}
+import core.Face.{EqOne, EqZero, IntervalCongruence, OneFace}
+
+import pl.wojciechkarpiel.szemek
 
 import scala.annotation.tailrec
 
@@ -448,7 +450,25 @@ object TypeChecking {
         }
       }
 
-    private class NonIntrospectingIntervalReplacer(existsNow: Interval, shouldExist: Interval) {
+    class IntervalReplacer(existsNow: Interval, shouldExist: Interval) {
+
+      def introspectInterval(i: Interval): Interval =
+        if i == existsNow then shouldExist else i match
+          case Interval.Zero => Zero
+          case Interval.One => One
+          case Interval.Opp(i) => Interval.Opp(introspectInterval(i))
+          case Interval.Min(i1, i2) => Interval.Min(introspectInterval(i1), introspectInterval(i2))
+          case Interval.Max(i1, i2) => Interval.Max(introspectInterval(i1), introspectInterval(i2))
+          case p@Interval.PhantomInterval(_) => p
+
+      def introspectFace(f: Face): Face = f match
+        case Face.ZeroFace => Face.ZeroFace
+        case Face.OneFace => Face.OneFace
+        case Face.EqZero(i) => Face.EqZero(introspectInterval(i))
+        case Face.EqOne(i) => Face.EqOne(introspectInterval(i))
+        case Face.FaceMin(f1, f2) => Face.FaceMin(introspectFace(f1), introspectFace(f2))
+        case Face.FaceMax(f1, f2) => Face.FaceMax(introspectFace(f1), introspectFace(f2))
+
       def apply(term: Term): Term = term match
         // TODO should we reduce context by first explicitly substituting outside?
         case Lambda(argType, abs) => Lambda(apply(argType), x => apply(abs(x)))
@@ -468,12 +488,23 @@ object TypeChecking {
           PathType(i => apply(tpe(i)), apply(start), apply(end))
         case PathAbstraction(abs, metadata) => PathAbstraction(i => apply(abs(i)), metadata)
         case PathElimination(term, arg) => // note that we're not introspecting the nature of arg
-          PathElimination(apply(term), if arg == existsNow then shouldExist else arg)
+          PathElimination(apply(term), introspectInterval(arg))
         case Term.Universe => Universe
         case GlobalVar(id) => GlobalVar(id)
         case p@PhantomVarOfType(_, _) => p
-        case System(value, motive, _) => ???
-        case Composition(a0, typeAnSystem) => ???
+        case System(value, motive, dd) =>
+          System(
+            value.map { case (k, v) => introspectFace(k) -> apply(v) },
+            apply(motive),
+            dd
+          )
+        case Composition(a0, typeAnSystem) => Composition(
+          apply(a0),
+          i => {
+            val (t, s) = typeAnSystem(i)
+            (apply(t), apply(s).asInstanceOf[System])
+          }
+        )
     }
 
     class Replacer(existsNow: PhantomVarOfType, shouldExist: Term) {
@@ -757,7 +788,7 @@ object TypeChecking {
           val i = PhantomInterval.fresh()
           checkInferType(abs(i)) match
             case InferResult.Ok(absTypeUnderI) =>
-              val abstractedType = (j: Interval) => NonIntrospectingIntervalReplacer(i, j).apply(absTypeUnderI)
+              val abstractedType = (j: Interval) => IntervalReplacer(i, j).apply(absTypeUnderI)
               Ok(PathType(abstractedType, abs(Zero), abs(One)))
             case f: InferResult.Fail => f
         case PathElimination(term, intervalArg) =>
