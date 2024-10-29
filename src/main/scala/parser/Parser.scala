@@ -53,9 +53,10 @@ private[parser] object NonHoasTerm {
   }
 
   //case class System(value: Seq[(Face, Term)], motive: Term, requiresFullRestriction: Boolean = true /*hack to handle composition easier*/) extends Term {
-  final case class SystemTerm() extends Term
+  final case class SystemTerm(value: Seq[(NonHoasTerm.Face, NonHoasTerm.Term)], motive: NonHoasTerm.Term) extends Term
 
   //case class Composition(a0: Term, typeAndSystem: Interval => (Term, System)) extends Term {
+  final case class Composition(a0: NonHoasTerm.Term, iName: String, s: NonHoasTerm.Term) extends Term
 
   case class LambdaTerm(varName: String, argType: Term, body: Term) extends Term {
     override def toString: String = s"λ$varName: $argType => $body"
@@ -179,6 +180,12 @@ private object ParsingAstTransformer {
     case NonHoasTerm.VariableTerm(name, location) => NonHoasTerm.VariableTerm(name, location)
     case NonHoasTerm.Parened(value) => NonHoasTerm.Parened(fixAppAssociation(value))
     case NonHoasTerm.NatRecTerm(motive, base, step) => NonHoasTerm.NatRecTerm(fixAppAssociation(motive).asInstanceOf[NonHoasTerm.LambdaTerm], fixAppAssociation(base), fixAppAssociation(step))
+    case NonHoasTerm.Composition(a0, nme, sys) => NonHoasTerm.Composition(
+      fixAppAssociation(a0), nme, fixAppAssociation(sys)
+    )
+    case NonHoasTerm.SystemTerm(value, tpe) => NonHoasTerm.SystemTerm(
+      value.map { case (f, t) => (f, fixAppAssociation(t)) }, fixAppAssociation(tpe)
+    )
     case NonHoasTerm.TopLevel(defs, term) => NonHoasTerm.TopLevel(defs.map { case (name, term) => (name, NonHoasTerm.MaybeTypedParseTerm(fixAppAssociation(term.term), term.tpe.map(fixAppAssociation))) }, fixAppAssociation(term))
 
   def transformTopLevel(term: TopLevel, inCtx_ : Ctx): ParseResultUnchecked = {

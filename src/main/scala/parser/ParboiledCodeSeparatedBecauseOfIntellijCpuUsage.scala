@@ -3,6 +3,7 @@ package parser
 
 import org.parboiled2.*
 import org.parboiled2.support.hlist.*
+import pl.wojciechkarpiel.szemek
 import pl.wojciechkarpiel.szemek.parser.Parser.ParseResultUnchecked
 import pl.wojciechkarpiel.szemek.parser.ParsingAstTransformer.Ctx
 
@@ -40,7 +41,7 @@ private[parser] class CubicalTypeTheoryParser(val input: ParserInput) extends Pa
   }
 
   private def TopLevelTermNoTrailingWs: Rule1[Term] = rule {
-    LambdaExprNoTrailingWs | PiTypeExpr | PathAbstractionExprNoTrailingWs | PathTypeExpr |
+    SystemRuleNoTrailingWs | CompRuleNoTrailingWs | LambdaExprNoTrailingWs | PiTypeExpr | PathAbstractionExprNoTrailingWs | PathTypeExpr |
       NatZeroExpr | SucExpr | NatRecExpr | NatTypeExpr | UniverseExpr | PairIntroExpr | PairTypeExpr |
       FstExpr | SndExpr | ApplicationExpr | ParensExpr | VariableExprNoTrailingWs
   }
@@ -222,6 +223,19 @@ private[parser] class CubicalTypeTheoryParser(val input: ParserInput) extends Pa
       (f1: NonHoasTerm.Face, f2: NonHoasTerm.Face) => NonHoasTerm.Face.FaceMin(f1, f2)
       )
   )
+
+  // todo how to zeroOrMore with no comma ending kek
+  private def SystemRuleNoTrailingWs: Rule1[NonHoasTerm.SystemTerm] = rule {
+    "[" ~ WS ~ zeroOrMore(FaceRule ~ WS ~ "->" ~ WS ~ TopLevelTerm ~ WS ~ ",".? ~ WS ~> (
+      (f: NonHoasTerm.Face, t: NonHoasTerm.Term) => (f, t)
+      )) ~ "]:" ~ WS ~ TopLevelTerm ~ WS ~> SystemTerm.apply
+  }
+
+  private def CompRuleNoTrailingWs: Rule1[NonHoasTerm.Composition] = rule {
+    "Comp(" ~ WS ~ TopLevelTerm ~ WS ~ "," ~ WS ~ Identifier ~ WS ~ "->" ~ WS ~ SystemRuleNoTrailingWs ~ WS ~ ")" ~> (
+      (a0: NonHoasTerm.Term, id: String, s: SystemTerm) => NonHoasTerm.Composition(a0, id, s)
+      )
+  }
 }
 
 

@@ -154,6 +154,24 @@ class ParserTest extends AnyFunSuiteLike {
     ))
   }
 
+  test("system parse") {
+    val in = """[ Feq0(i) -> 0, F1 -> S(0) ]:Nat"""
+    assert(CubicalTypeTheoryParser(in).InputLine.run().get.term == NonHoasTerm.SystemTerm(Seq(
+      (NonHoasTerm.Face.EqZero(NonHoasTerm.Interval.NamedInterval("i")), NonHoasTerm.NatZeroTerm),
+      (NonHoasTerm.Face.OneFace, NonHoasTerm.SucTerm(NonHoasTerm.NatZeroTerm))
+    ), NonHoasTerm.NatTypeTerm))
+  }
+
+  test("comp parse") {
+    // TODO rework to proper full parsing
+    val in = """Comp( 0 ,i -> [ Feq0(i) -> 0, F1 -> S(0) ]:Nat)"""
+    assert(CubicalTypeTheoryParser(in).InputLine.run().get.term ==
+      NonHoasTerm.Composition(NonHoasTerm.NatZeroTerm, "i",
+        NonHoasTerm.SystemTerm(Seq(
+          (NonHoasTerm.Face.EqZero(NonHoasTerm.Interval.NamedInterval("i")), NonHoasTerm.NatZeroTerm),
+          (NonHoasTerm.Face.OneFace, NonHoasTerm.SucTerm(NonHoasTerm.NatZeroTerm))
+        ), NonHoasTerm.NatTypeTerm)))
+  }
 
 }
 
