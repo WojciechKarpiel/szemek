@@ -160,6 +160,7 @@ private object ParsingAstTransformer {
 
   // should be done at parsing time but im too retarded
   def fixAppAssociation(term: NonHoasTerm.Term): NonHoasTerm.Term = term match
+    case NonHoasTerm.MaybeTypedParseTerm(term, tpe) => NonHoasTerm.MaybeTypedParseTerm(fixAppAssociation(term), tpe.map(fixAppAssociation))
     case NonHoasTerm.LambdaTerm(varName, argType, body) => NonHoasTerm.LambdaTerm(varName, fixAppAssociation(argType), fixAppAssociation(body))
     case NonHoasTerm.PiTypeTerm(varName, argType, body) => NonHoasTerm.PiTypeTerm(varName, fixAppAssociation(argType), fixAppAssociation(body))
     case a@NonHoasTerm.ApplicationTerm(fun, arg) => chaseApplications(a, Seq())
@@ -235,6 +236,13 @@ private object ParsingAstTransformer {
   }
 
   def transform(term: NonHoasTerm.Term, ctx: Ctx): Term = term match
+    case NonHoasTerm.TopLevel(defs, term) => throw new RuntimeException(s"kek $defs $term")
+    case NonHoasTerm.MaybeTypedParseTerm(term, tpe) =>
+      val trm = transform(term, ctx)
+      val ttpe = tpe.map(transform(_, ctx))
+      ttpe match
+        case Some(value) => TypedTerm(trm, value)
+        case None => trm
     case NonHoasTerm.Parened(t) => transform(t, ctx)
     case NonHoasTerm.SystemTerm(value, motive) =>
       System(

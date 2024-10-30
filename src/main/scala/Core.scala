@@ -14,19 +14,19 @@ import scala.annotation.tailrec
 
 final case class Id(value: String) extends AnyVal
 
-// TODO eigenvals
 sealed trait Term
 
 object Term:
   object Counter {
-    private var counter: Int = 0
+    type Counter = Int
+    private var counter: Counter = 0
 
-    def next(): Int = {
+    def next(): Counter = {
       counter += 1
       counter
     }
 
-    val Constant: Int = next()
+    val Constant: Counter = next()
   }
 
   final case class Abstraction(argType: Term, abs: Term => Term) {
@@ -56,6 +56,18 @@ object Term:
     }
   }
 
+  // TODO
+  /*
+  final case class EigenVal(id:Counter.Counter, constraints: EigenVal.Constraints) extends Term{
+  }
+  object EigenVal{
+    enum Constraint:
+      case IdenticalTo(term:Term)
+      case GeneralizationOf(term:Term)
+    type Constraints = Seq[Constraint]
+    def apply(constraints: Constraint*): EigenVal = EigenVal(Counter.next(), constraints)
+  }
+*/
   // Pi type
   final case class Lambda(argType: Term, abs: Term => Term) extends Term with KindOfAbstraction {
     override def abstraction: Abstraction = Abstraction(argType, abs)
@@ -372,7 +384,7 @@ object Context {
   val Empty: Context = new Context(List())
 }
 
-final case class TypedTerm(term: Term, tpe: Term)
+final case class TypedTerm(term: Term, tpe: Term) extends Term
 
 object TypeChecking {
 
@@ -470,6 +482,7 @@ object TypeChecking {
         case Face.FaceMax(f1, f2) => Face.FaceMax(introspectFace(f1), introspectFace(f2))
 
       def apply(term: Term): Term = term match
+        case TypedTerm(t, tpe) => TypedTerm(apply(t), apply(tpe))
         // TODO should we reduce context by first explicitly substituting outside?
         case Lambda(argType, abs) => Lambda(apply(argType), x => apply(abs(x)))
         case PiType(argType, abs) => PiType(apply(argType), x => apply(abs(x)))
@@ -509,6 +522,7 @@ object TypeChecking {
 
     class Replacer(existsNow: PhantomVarOfType, shouldExist: Term) {
       def apply(term: Term): Term = term match
+        case TypedTerm(term, tpe) => TypedTerm(apply(term), apply(tpe))
         case Lambda(argType, abs) => Lambda(apply(argType), x => apply(abs(x)))
         case PiType(argType, abs) => PiType(apply(argType), x => apply(abs(x)))
         case Application(fun, arg) => Application(apply(fun), apply(arg))
@@ -622,6 +636,7 @@ object TypeChecking {
       }
 
       final def fullyNormalizedNoCheck(term: Term): Term = whnfNoCheck(term).term match
+        case TypedTerm(t, _) => fullyNormalizedNoCheck(t)
         case Lambda(argType, abs) => Lambda(fullyNormalizedNoCheck(argType), x => fullyNormalizedNoCheck(abs(x)))
         case PiType(argType, abs) => PiType(fullyNormalizedNoCheck(argType), x => fullyNormalizedNoCheck(abs(x)))
         case Application(fun, arg) => Application(fullyNormalizedNoCheck(fun), fullyNormalizedNoCheck(arg))
@@ -653,6 +668,16 @@ object TypeChecking {
        * Does not rewrite eagerly
        */
       def checkInferType(term: Term): InferResult = term match
+        case TypedTerm(term, tpe) =>
+          checkInferType(tpe) match
+            case Ok(Universe) => checkInferType(term) match
+              case Ok(inferredType) =>
+                if eqNormalazing(tpe, inferredType)
+                then Ok(tpe)
+                else Fail(s"Expected type of typed term is not the inferred: $tpe != $inferredType")
+              case fail: Fail => fail.addToTrace(s"failed checking type of typed term: $term of presumed type $tpe")
+            case Ok(other) => Fail(s"Type of TypedTerm is not a universe: $other")
+            case fail: Fail => fail.addToTrace("err while checking tpe of typedterm")
         case Term.NatZero => Ok(NatType)
         case Suc(n) =>
           checkInferType(n) match
