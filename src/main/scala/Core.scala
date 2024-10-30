@@ -621,6 +621,7 @@ object TypeChecking {
             sys.find { case (f, _) => Face.reduce(f) == OneFace } match
               case Some((_, term)) => changed(term)
               case None => unchanged
+          case TypedTerm(term, _) => changed(term)
           case _ => unchanged
       }
 
