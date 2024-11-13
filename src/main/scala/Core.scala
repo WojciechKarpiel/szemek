@@ -1,20 +1,26 @@
 package pl.wojciechkarpiel.szemek
 
 import Interval.{One, PhantomInterval, Zero}
-import Term.{Counter, PhantomVarOfType, Universe}
+import Term.{Counter, EigenVal, PhantomVarOfType, Universe}
 import TypeChecking.V2.InferResult.Ok
 import TypeChecking.V2.{InferResult, NonCheckingReducer, checkInferType, eqNormalizingNoCheck}
 import core.Face
 import core.Face.{EqOne, EqZero, IntervalCongruence, OneFace}
 
 import pl.wojciechkarpiel.szemek
+import pl.wojciechkarpiel.szemek.Term.EigenVal.Constraint.{IdenticalTo, IsOfType}
+import pl.wojciechkarpiel.szemek.Term.EigenVal.{Constraint, Constraints}
 
 import scala.annotation.tailrec
+import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
 
 
 final case class Id(value: String) extends AnyVal
 
-sealed trait Term
+sealed trait Term {
+  def isEigenVal: Boolean = this.isInstanceOf[EigenVal]
+}
 
 object Term:
   object Counter {
@@ -56,18 +62,21 @@ object Term:
     }
   }
 
-  // TODO
-  /*
-  final case class EigenVal(id:Counter.Counter, constraints: EigenVal.Constraints) extends Term{
+  final case class EigenVal(id: Counter.Counter) extends Term {
+    override def toString: String = s"ε$id"
   }
-  object EigenVal{
+
+  object EigenVal {
     enum Constraint:
-      case IdenticalTo(term:Term)
-      case GeneralizationOf(term:Term)
+      case IdenticalTo(a: Term, b: Term)
+      case IsOfType(term: Term, tpe: Term)
+
     type Constraints = Seq[Constraint]
-    def apply(constraints: Constraint*): EigenVal = EigenVal(Counter.next(), constraints)
+
+    def fresh(): EigenVal = EigenVal(Counter.next())
+
   }
-*/
+
   // Pi type
   final case class Lambda(argType: Term, abs: Term => Term) extends Term with KindOfAbstraction {
     override def abstraction: Abstraction = Abstraction(argType, abs)
@@ -660,17 +669,62 @@ object TypeChecking {
         case s: System => s
     }
 
+    def checkInferTypeEig(term: Term, ctx: Context = Context.Empty): InferResult =
+      NonReducingCheckerInferrer(ctx).checkInferTypeEig(term)
+
     def checkInferType(term: Term, ctx: Context = Context.Empty): InferResult =
       NonReducingCheckerInferrer(ctx).checkInferType(term)
 
     class NonReducingCheckerInferrer(ctx: Context, skipChecksOnlyInfer: Boolean = false) {
+
+      val constraints = new ArrayBuffer[Constraint]()
+
+      def addConstraint(c: Constraint): Unit = {
+        constraints.addOne(c)
+      }
+
+      def checkInferTypeEig(term: Term): InferResult =
+        checkInferType(term) match
+          case Ok(tpe) =>
+            if constraints.isEmpty then Ok(tpe)
+            else
+              println(s"Resolving constraints for: $constraints")
+              val constraintsl = constraints.toList
+              val solutions = ConstraintResolver.resolveStarter(constraintsl)
+              println(s"QQQQQQQQQQQQQ $solutions")
+              // TODO CHECK THAT ALL WAS RESOLVED!!!!!!!!!!!!!!!!!!!!!
+
+              Ok(if tpe.isEigenVal then solutions.find(_.from == tpe).get.to else tpe)
+          case f: Fail => f
+
       /**
        * Checks inferrence correctness.
        * Does not rewrite eagerly
        */
       def checkInferType(term: Term): InferResult = term match
-        case TypedTerm(term, tpe) =>
+        case e: EigenVal =>
+          val fresh = EigenVal.fresh()
+          addConstraint(IsOfType(e, fresh))
+          Ok(fresh)
+        case tt@TypedTerm(term, tpe) =>
+          if term.isEigenVal || tpe.isEigenVal then addConstraint(Constraint.IsOfType(term, tpe));
+
           checkInferType(tpe) match
+            case Ok(e: EigenVal) =>
+              addConstraint(IdenticalTo(e, Universe))
+              // TODO COPY PASTA FROM OK(UNIV) - START
+              checkInferType(term) match
+                case Ok(inferredType) =>
+                  // todo this check should be at eqNormalizing, and add by it, not separate
+                  if tpe.isEigenVal then {
+                    addConstraint(IdenticalTo(tpe, inferredType))
+                    Ok(tpe)
+                  }
+                  else if eqNormalazing(tpe, inferredType)
+                  then Ok(tpe)
+                  else Fail(s"Expected type of typed term is not the inferred: $tpe != $inferredType")
+                case fail: Fail => fail.addToTrace(s"failed checking type of typed term: $term of presumed type $tpe")
+            // TODO COPY PASTA FROM OK(UNIV) - END
             case Ok(Universe) => checkInferType(term) match
               case Ok(inferredType) =>
                 if eqNormalazing(tpe, inferredType)
