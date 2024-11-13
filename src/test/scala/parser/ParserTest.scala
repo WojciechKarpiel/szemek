@@ -177,6 +177,20 @@ class ParserTest extends AnyFunSuiteLike {
     }))
   }
 
+  test("minimal eigen") {
+    assert(Parser.parse("_").term.isEigenVal)
+  }
+  test("eigenparse") {
+    val in = "0 : _"
+    val p = Parser.parse(in)
+    assert(p.ctx.isEmpty)
+    val t = p.term
+    assert(t.isInstanceOf[TypedTerm])
+    val tt = t.asInstanceOf[TypedTerm]
+    assert(tt.term == NatZero)
+    assert(tt.tpe.isEigenVal)
+  }
+
 }
 
 /*

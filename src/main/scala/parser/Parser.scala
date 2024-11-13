@@ -7,9 +7,9 @@ import pl.wojciechkarpiel.szemek.TypeChecking.V2
 import pl.wojciechkarpiel.szemek.TypeChecking.V2.{IntervalReplacer, Replacer}
 import pl.wojciechkarpiel.szemek.parser.NonHoasTerm.{Face, Interval, TopLevel}
 import pl.wojciechkarpiel.szemek.parser.Parser.ParseResultUnchecked
-
-import pl.wojciechkarpiel.szemek.core.{Face => CF}
-import pl.wojciechkarpiel.szemek.{Interval => CI}
+import pl.wojciechkarpiel.szemek.core.Face as CF
+import pl.wojciechkarpiel.szemek.Interval as CI
+import pl.wojciechkarpiel.szemek.Term.Counter.Counter
 
 
 object Parser {
@@ -50,11 +50,15 @@ private[parser] object NonHoasTerm {
 
   final case class MaybeTypedParseTerm(term: Term, tpe: Option[Term]) extends Term
 
+  final case class TypedParseTerm(term: Term, tpe: Term) extends Term
+
   case class TopLevel(defs: Seq[(String, MaybeTypedParseTerm)], term: Term) extends Term
 
   case class Parened(term: Term) extends Term {
     override def toString: String = s"($term)"
   }
+
+  final case class EigenTerm(c: Counter) extends Term
 
   //case class System(value: Seq[(Face, Term)], motive: Term, requiresFullRestriction: Boolean = true /*hack to handle composition easier*/) extends Term {
   final case class SystemTerm(value: Seq[(NonHoasTerm.Face, NonHoasTerm.Term)], motive: NonHoasTerm.Term) extends Term
@@ -192,6 +196,8 @@ private object ParsingAstTransformer {
       value.map { case (f, t) => (f, fixAppAssociation(t)) }, fixAppAssociation(tpe)
     )
     case NonHoasTerm.TopLevel(defs, term) => NonHoasTerm.TopLevel(defs.map { case (name, term) => (name, NonHoasTerm.MaybeTypedParseTerm(fixAppAssociation(term.term), term.tpe.map(fixAppAssociation))) }, fixAppAssociation(term))
+    case NonHoasTerm.EigenTerm(c) => NonHoasTerm.EigenTerm(c)
+    case NonHoasTerm.TypedParseTerm(term, tpe) => NonHoasTerm.TypedParseTerm(fixAppAssociation(term), fixAppAssociation(tpe))
 
   def transformTopLevel(term: TopLevel, inCtx_ : Ctx): ParseResultUnchecked = {
     var inCtx = inCtx_
@@ -307,6 +313,8 @@ private object ParsingAstTransformer {
         transform(base, ctx),
         transform(step, ctx)
       )
+    case NonHoasTerm.EigenTerm(c) => EigenVal(c)
+    case NonHoasTerm.TypedParseTerm(term, tpe) => TypedTerm(transform(term, ctx), transform(tpe, ctx))
 
   private def guess(name: String, ctx: Ctx): Term | CI =
     ctx.get(name)

@@ -4,6 +4,7 @@ package parser
 import org.parboiled2.*
 import org.parboiled2.support.hlist.*
 import pl.wojciechkarpiel.szemek
+import pl.wojciechkarpiel.szemek.Term.Counter
 import pl.wojciechkarpiel.szemek.parser.Parser.ParseResultUnchecked
 import pl.wojciechkarpiel.szemek.parser.ParsingAstTransformer.Ctx
 
@@ -41,7 +42,7 @@ private[parser] class CubicalTypeTheoryParser(val input: ParserInput) extends Pa
   }
 
   private def TopLevelTermNoTrailingWs: Rule1[Term] = rule {
-    SystemRuleNoTrailingWs | CompRuleNoTrailingWs | LambdaExprNoTrailingWs | PiTypeExpr | PathAbstractionExprNoTrailingWs | PathTypeExpr |
+    TypedTermNoWs | EigenExprtNoWs | SystemRuleNoTrailingWs | CompRuleNoTrailingWs | LambdaExprNoTrailingWs | PiTypeExpr | PathAbstractionExprNoTrailingWs | PathTypeExpr |
       NatZeroExpr | SucExpr | NatRecExpr | NatTypeExpr | UniverseExpr | PairIntroExpr | PairTypeExpr |
       FstExpr | SndExpr | ApplicationExpr | ParensExpr | VariableExprNoTrailingWs
   }
@@ -50,6 +51,10 @@ private[parser] class CubicalTypeTheoryParser(val input: ParserInput) extends Pa
     PathAbstractionExprNoTrailingWs ~ WS
   }
 
+  private def TypedTermNoWs: Rule1[TypedParseTerm] = rule {
+    AppStartExpr ~ WS ~ ":" ~ WS ~ TopLevelTermNoTrailingWs ~> ((t: Term, tpe: Term) => TypedParseTerm(t, tpe))
+    // AppStartExpr ~ zeroOrMore(" ") ~ (AppEndingExpr | PathEndingExpr)
+  }
   private def ParenedExprNoTrailingWs: Rule1[Term] = rule {
     "(" ~ WS ~ TopLevelTerm ~ WS ~ ")"
   }
@@ -59,6 +64,10 @@ private[parser] class CubicalTypeTheoryParser(val input: ParserInput) extends Pa
   private def Term: Rule1[Term] = rule(TopLevelTerm) // TODO delet
 
   private def TermNoTrailingWs: Rule1[Term] = rule(TopLevelTermNoTrailingWs) // TODO delet
+
+  def EigenExprtNoWs: Rule1[EigenTerm] = rule {
+    "_" ~ push(EigenTerm(Counter.next()))
+  }
 
   def LambdaExpr: Rule1[Term] = rule {
     LambdaExprNoTrailingWs ~ WS
@@ -100,6 +109,7 @@ private[parser] class CubicalTypeTheoryParser(val input: ParserInput) extends Pa
 
   private def AppStartExpr: Rule1[Term] = rule {
     LambdaExprNoTrailingWs | PathAbstractionExprNoTrailingWs | ParenedExprNoTrailingWs | VariableExprNoTrailingWs
+      | NatExpr
   }
 
   def ApplicationExpr: Rule1[Term] =
@@ -120,6 +130,8 @@ private[parser] class CubicalTypeTheoryParser(val input: ParserInput) extends Pa
   def SimpleExpr: Rule1[Term] = rule {
     TopLevelTerm // TODO
   }
+
+  def NatExpr: Rule1[Term] = rule(NatZeroExpr | SucExpr | NatTypeExpr)
 
   def NatZeroExpr: Rule1[Term] = rule {
     '0' ~ push(NatZeroTerm)
