@@ -1,12 +1,11 @@
 package pl.wojciechkarpiel.szemek
 package core
 
+import Term.*
 import Term.EigenVal.Constraint.IdenticalTo
 import Term.EigenVal.Constraints
 import TypeChecking.V2.NonCheckingReducer
-
-import pl.wojciechkarpiel.szemek.Term.*
-import pl.wojciechkarpiel.szemek.core.EigenEqNoCheck.Result
+import core.EigenEqNoCheck.Result
 
 class EigenEqNoCheck(ctx: Context) {
   def equals(a: Term, b: Term): EigenEqNoCheck.Result = topLevel(a, b)
@@ -16,18 +15,18 @@ class EigenEqNoCheck(ctx: Context) {
     else {
       val t1n = NonCheckingReducer(ctx, unfoldDefinitions = false).whnfNoCheck(a).term
       val t2n = NonCheckingReducer(ctx, unfoldDefinitions = false).whnfNoCheck(b).term
-      if t1n == t2n then EigenEqNoCheck.Result.IsEq(Seq())
-      else {
-        if t1n.isEigenVal || t2n.isEigenVal then
-          EigenEqNoCheck.Result.IsEq(Seq(IdenticalTo(t1n, t2n)))
-        else eqWhfNoDeltaNoEigen(t1n, t2n)
-
-      }
+      eqWhf(t1n, t2n)
     }
   }
 
-  private def eqWhfNoDeltaNoEigen(a: Term, b: Term): EigenEqNoCheck.Result = {
+  // UWAGA: Co jeśli App(Globaldef, x) możnba uprościć, tylko to wymaga odwinięcia definicji?
+  // trzeba się upwwniż że noncheckingreducer to obsługuje!!!
+  private def eqWhf(a: Term, b: Term): EigenEqNoCheck.Result = {
     (a, b) match {
+      case (e1: EigenVal, e2: EigenVal) => if e1 == e2 then EigenEqNoCheck.Result.IsEq(Seq())
+      else EigenEqNoCheck.Result.IsEq(Seq(IdenticalTo(e1, e2)))
+      case (e1: EigenVal, other) => EigenEqNoCheck.Result.IsEq(Seq(IdenticalTo(e1, other)))
+      case (other, e2: EigenVal) => EigenEqNoCheck.Result.IsEq(Seq(IdenticalTo(other, e2)))
       case (NatType, NatType) => EigenEqNoCheck.Result.IsEq(Seq())
       case (_, NatType) | (NatType, _) => EigenEqNoCheck.Result.NonEq
       case (Suc(n1), Suc(n2)) => topLevel(n1, n2)
@@ -45,8 +44,22 @@ class EigenEqNoCheck(ctx: Context) {
             case Result.NonEq => Result.NonEq
             case Result.IsEq(constr2) => Result.IsEq(constr ++ constr2)
       case (Application(_, _), _) | (_, Application(_, _)) => EigenEqNoCheck.Result.NonEq
-      // todo remember that defs are not unfolded, unfold if necessary
+      // remember that defs are not unfolded, unfold if necessary
+      case (GlobalVar(id1), GlobalVar(id2)) =>
+        if id1 == id2 then EigenEqNoCheck.Result.IsEq(Seq())
+        else {
+          val def1 = ctx.get(id1).get // todo how to handle None ?
+          val def2 = ctx.get(id2).get
+          topLevel(def1, def2)
+        }
+      case (GlobalVar(id), other) =>
+        val defn = ctx.get(id).get // todo how to handle None ?
+        topLevel(defn, other)
+      case (other, GlobalVar(id)) =>
+        val defn = ctx.get(id).get // todo how to handle None ?
+        topLevel(other, defn)
     }
+
   }
 
   private def eqAbstraction(a: Abstraction, b: Abstraction): EigenEqNoCheck.Result = {

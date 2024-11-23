@@ -1,6 +1,8 @@
 package pl.wojciechkarpiel.szemek
 
 import Interval.{One, PhantomInterval, Zero}
+import Term.EigenVal.Constraint
+import Term.EigenVal.Constraint.{IdenticalTo, IsOfType}
 import Term.{Counter, EigenVal, PhantomVarOfType, Universe}
 import TypeChecking.V2.InferResult.Ok
 import TypeChecking.V2.{InferResult, NonCheckingReducer, checkInferType, eqNormalizingNoCheck}
@@ -8,8 +10,6 @@ import core.Face
 import core.Face.{EqOne, EqZero, IntervalCongruence, OneFace}
 
 import pl.wojciechkarpiel.szemek
-import pl.wojciechkarpiel.szemek.Term.EigenVal.Constraint.{IdenticalTo, IsOfType}
-import pl.wojciechkarpiel.szemek.Term.EigenVal.{Constraint, Constraints}
 
 import scala.annotation.tailrec
 import scala.collection.mutable
@@ -554,7 +554,7 @@ object TypeChecking {
         case Composition(a0, typeAndSystem) => ???
     }
 
-    class NonCheckingReducer(ctx: Context, unfoldDefinitions: Boolean = true) {
+    class NonCheckingReducer(ctx: Context, var unfoldDefinitions: Boolean = true) {
       def etaContractNoCheck(t: Term): ReductionResult = {
         def unchanged = ReductionResult(t, true)
 
@@ -609,6 +609,13 @@ object TypeChecking {
               case ReductionResult(Lambda(_, abs), _) => changed(abs(arg))
               case ReductionResult(nRec: NatRecursion, _) =>
                 changed(NatRecApply(nRec, arg)) // promote app to nat-rec-app TODO: remove nat-rec-app as a sepoarate term
+              // handle non reducing GlobalVar - it's a possible fn so we should reduce
+              case ReductionResult(g: GlobalVar, _) if !unfoldDefinitions =>
+                val was = this.unfoldDefinitions
+                this.unfoldDefinitions = true
+                val ReductionResult(possibyUnfoldedDef, equalToInput) = whnfNoCheck(g)
+                this.unfoldDefinitions = was
+                if equalToInput then unchanged else whnfNoCheck(Application(possibyUnfoldedDef, arg))
               case _ => unchanged
           case c: Composition =>
             c.typeAndSystem(One)._2.value.find(f => Face.reduce(f._1) == OneFace) match
