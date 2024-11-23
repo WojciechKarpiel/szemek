@@ -554,7 +554,7 @@ object TypeChecking {
         case Composition(a0, typeAndSystem) => ???
     }
 
-    class NonCheckingReducer(ctx: Context) {
+    class NonCheckingReducer(ctx: Context, unfoldDefinitions: Boolean = true) {
       def etaContractNoCheck(t: Term): ReductionResult = {
         def unchanged = ReductionResult(t, true)
 
@@ -583,7 +583,8 @@ object TypeChecking {
         def changed(t: Term) = ReductionResult(t, false)
 
         term match
-          case GlobalVar(id) => ctx.get(id) match
+          case GlobalVar(_) if !unfoldDefinitions => unchanged
+          case GlobalVar(id) if unfoldDefinitions => ctx.get(id) match
             case Some(TypedTerm(t, _)) if !(t.isInstanceOf[PhantomVarOfType]) =>
               changed(t) // todo what if this is too eager?
             case _ => unchanged
