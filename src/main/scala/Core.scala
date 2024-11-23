@@ -24,7 +24,7 @@ sealed trait Term {
 
 object Term:
   object Counter {
-    type Counter = Int
+    type Counter = Long
     private var counter: Counter = 0
 
     def next(): Counter = {
@@ -225,7 +225,7 @@ object Term:
     def apply(id: String): GlobalVar = GlobalVar(Id(id))
   }
 
-  final case class PhantomVarOfType(tpe: Term, id: Int = Counter.Constant) extends Term {
+  final case class PhantomVarOfType(tpe: Term, id: Counter.Counter = Counter.Constant) extends Term {
     override def toString: String = s"φ$id" // Φφ
   }
 
@@ -287,7 +287,7 @@ enum Interval:
   case Opp(i: Interval)
   case Min(i1: Interval, i2: Interval)
   case Max(i1: Interval, i2: Interval)
-  case PhantomInterval(id: Int) // TODO toString better
+  case PhantomInterval(id: Counter.Counter) // TODO toString better
 
 object PhantomInterval {
   val Constant: Interval = Interval.PhantomInterval(Counter.Constant)
