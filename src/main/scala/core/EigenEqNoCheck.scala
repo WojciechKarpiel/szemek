@@ -7,6 +7,8 @@ import Term.EigenVal.Constraints
 import TypeChecking.V2.NonCheckingReducer
 import core.EigenEqNoCheck.Result
 
+import pl.wojciechkarpiel.szemek.core.EigenEqNoCheck.Result.NonEq
+
 class EigenEqNoCheck(ctx: Context) {
   def equals(a: Term, b: Term): EigenEqNoCheck.Result = topLevel(a, b)
 
@@ -58,8 +60,60 @@ class EigenEqNoCheck(ctx: Context) {
       case (other, GlobalVar(id)) =>
         val defn = ctx.get(id).get // todo how to handle None ?
         topLevel(other, defn)
+      case (PairIntro(fst1, snd1, motive1), PairIntro(fst2, snd2, motive2)) =>
+        topLevel(fst1, fst2) match
+          case Result.NonEq => Result.NonEq
+          case Result.IsEq(constrFst) =>
+            topLevel(snd1, snd2) match
+              case Result.NonEq => Result.NonEq
+              case Result.IsEq(constrSnd) =>
+                val phi = PhantomVarOfType.fresh(fst1)
+                val in1 = motive1(phi)
+                val in2 = motive2(phi)
+                topLevel(in1, in2) match
+                  case Result.NonEq => Result.NonEq
+                  case Result.IsEq(constrMot /* can contain phi */) =>
+                    Result.IsEq(constrFst ++ constrSnd ++ constrMot)
+      case (PairIntro(_, _, _), _) | (_, PairIntro(_, _, _)) => Result.NonEq
+      case (p1@PairType(f1, s1), p2@PairType(f2, s2)) => eqAbstraction(p1.abstraction, p2.abstraction)
+      case (PairType(_, _), _) | (_, PairType(_, _)) => Result.NonEq
+      case (Fst(p1), Fst(p2)) => topLevel(p1, p2)
+      case (Fst(_), _) | (_, Fst(_)) => Result.NonEq
+      case (Snd(p1), Snd(p2)) => topLevel(p1, p2)
+      case (Snd(_), _) | (_, Snd(_)) => Result.NonEq
+      case (Universe, Universe) => Result.IsEq(Seq())
+      case (Universe, _) | (_, Universe) => Result.NonEq
+      case (p1: PhantomVarOfType, p2: PhantomVarOfType) => if p1 == p2 then Result.IsEq(Seq()) else NonEq
+      case (_: PhantomVarOfType, _) | (_, _: PhantomVarOfType) => NonEq
+      /*
+          def eqNormalizingNoCheck(t1: Term, t2: Term)(ctx: Context): Boolean =
+        ctx.intervalCongruence.exFalsoQuodlibet || {
+          val t1n = NonCheckingReducer(ctx).whnfNoCheck(t1).term
+          val t2n = NonCheckingReducer(ctx).whnfNoCheck(t2).term
+          t1n == t2n || {
+            t1n match
+              case PathType(tpe1, start1, end1) =>
+                t2n match
+                  case PathType(tpe2, start2, end2) =>
+                    val i = PhantomInterval.fresh()
+                    eqNormalizingNoCheck(tpe1(i), tpe2(i))(ctx) &&
+                      eqNormalizingNoCheck(start1, start2)(ctx) &&
+                      eqNormalizingNoCheck(end1, end2)(ctx)
+                  case _ => false
+              case PathElimination(term1, arg1) =>
+                t2n match
+                  case PathElimination(term2, arg2) =>
+                    ctx.congruent(arg1, arg2) && eqNormalizingNoCheck(term1, term2)(ctx) //then true
+                  // or else the terms are totally ignored
+                  //                eqNormalizingNoCheck(term1, term2)(ctx) && {
+                  //                  Interval.normalize(arg1N) == Interval.normalize(arg2N)
+                  //                }
+                  case _ => false
+              case _ => false
+          }
+        }
+       */
     }
-
   }
 
   private def eqAbstraction(a: Abstraction, b: Abstraction): EigenEqNoCheck.Result = {
