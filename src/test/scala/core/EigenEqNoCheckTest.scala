@@ -1,9 +1,9 @@
 package pl.wojciechkarpiel.szemek
 package core
 
+import Term.*
 import Term.EigenVal.Constraint
 import Term.EigenVal.Constraint.IdenticalTo
-import Term.*
 import core.EigenEqNoCheck.Result
 
 import org.scalatest.funsuite.AnyFunSuiteLike
@@ -17,9 +17,23 @@ class EigenEqNoCheckTest extends AnyFunSuiteLike {
       case Result.IsEq(constr) => cnstrsAssert(constr)
   }
 
+  private def assertEqNoConstr(a: Term, b: Term, ctx: Context = Context.Empty): Unit =
+    assertEq(a, b, c => assert(c.isEmpty), ctx)
+
   private def assertNotEq(a: Term, b: Term, ctx: Context = Context.Empty): Unit = {
     val res = EigenEqNoCheck(ctx).equals(a, b)
     assert(res == EigenEqNoCheck.Result.NonEq)
+  }
+
+  test("resolves globals if needed") {
+    // checks for bug that happened - globals were checked too late in the pattern match and
+    val a = GlobalVar(Id("a"))
+    val ctx = Context.Empty.add(a.id, TypedTerm(NatZero, NatType))
+
+    assertEqNoConstr(a, NatZero, ctx)
+    assertEqNoConstr(TypedTerm(a, NatType), NatZero, ctx)
+    assertEqNoConstr(TypedTerm(a, NatType), TypedTerm(NatZero, NatType), ctx)
+    assertEqNoConstr(a, TypedTerm(NatZero, NatType), ctx)
   }
 
   test("testEquals") {

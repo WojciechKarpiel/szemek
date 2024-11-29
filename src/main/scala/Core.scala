@@ -6,8 +6,9 @@ import Term.EigenVal.Constraint.{IdenticalTo, IsOfType}
 import Term.{Counter, EigenVal, PhantomVarOfType, Universe}
 import TypeChecking.V2.InferResult.Ok
 import TypeChecking.V2.{InferResult, NonCheckingReducer, checkInferType, eqNormalizingNoCheck}
-import core.Face
+import core.EigenEqNoCheck.Result
 import core.Face.{EqOne, EqZero, IntervalCongruence, OneFace}
+import core.{EigenEqNoCheck, Face}
 
 import pl.wojciechkarpiel.szemek
 
@@ -441,35 +442,20 @@ object TypeChecking {
     final case class ReductionResult(term: Term, equalToInput: Boolean):
       def isChanged: Boolean = !equalToInput
 
-    // TODO better impl
+    def eqNormalizingNoCheck2(t1: Term, t2: Term)(ctx: Context): EigenEqNoCheck.Result =
+      // wywaliłbym to ex falso :(
+      if ctx.intervalCongruence.exFalsoQuodlibet then EigenEqNoCheck.Result.IsEq(Seq()) else
+        EigenEqNoCheck(ctx).equals(t1, t2)
 
     /** doesn't check if the terma are sound before normalizing */
     def eqNormalizingNoCheck(t1: Term, t2: Term)(ctx: Context): Boolean =
-      ctx.intervalCongruence.exFalsoQuodlibet || {
-        val t1n = NonCheckingReducer(ctx).whnfNoCheck(t1).term
-        val t2n = NonCheckingReducer(ctx).whnfNoCheck(t2).term
-        t1n == t2n || {
-          t1n match
-            case PathType(tpe1, start1, end1) =>
-              t2n match
-                case PathType(tpe2, start2, end2) =>
-                  val i = PhantomInterval.fresh()
-                  eqNormalizingNoCheck(tpe1(i), tpe2(i))(ctx) &&
-                    eqNormalizingNoCheck(start1, start2)(ctx) &&
-                    eqNormalizingNoCheck(end1, end2)(ctx)
-                case _ => false
-            case PathElimination(term1, arg1) =>
-              t2n match
-                case PathElimination(term2, arg2) =>
-                  ctx.congruent(arg1, arg2) && eqNormalizingNoCheck(term1, term2)(ctx) //then true
-                // or else the terms are totally ignored
-                //                eqNormalizingNoCheck(term1, term2)(ctx) && {
-                //                  Interval.normalize(arg1N) == Interval.normalize(arg2N)
-                //                }
-                case _ => false
-            case _ => false
-        }
-      }
+      eqNormalizingNoCheck2(t1, t2)(ctx) match
+        case EigenEqNoCheck.Result.IsEq(constraints) =>
+          if constraints.isEmpty then true else {
+            println(s"DZIAŁAŁOBY ALE MUSZĘ OGARNĄC OGRANICZENIA $constraints")
+            false
+          }
+        case EigenEqNoCheck.Result.NonEq => false
 
     class IntervalReplacer(existsNow: Interval, shouldExist: Interval) {
 
@@ -723,13 +709,7 @@ object TypeChecking {
               // TODO COPY PASTA FROM OK(UNIV) - START
               checkInferType(term) match
                 case Ok(inferredType) =>
-                  // todo this check should be at eqNormalizing, and add by it, not separate
-                  if tpe.isEigenVal then {
-                    addConstraint(IdenticalTo(tpe, inferredType))
-                    Ok(tpe)
-                  }
-                  else if eqNormalazing(tpe, inferredType)
-                  then Ok(tpe)
+                  if eqNormalazing(tpe, inferredType) then Ok(tpe)
                   else Fail(s"Expected type of typed term is not the inferred: $tpe != $inferredType")
                 case fail: Fail => fail.addToTrace(s"failed checking type of typed term: $term of presumed type $tpe")
             // TODO COPY PASTA FROM OK(UNIV) - END
@@ -966,7 +946,11 @@ object TypeChecking {
           else Fail("Face is i-dependent")
 
       def eqNormalazing(t1: Term, t2: Term): Boolean =
-        eqNormalizingNoCheck(t1, t2)(ctx)
+        eqNormalizingNoCheck2(t1, t2)(ctx) match
+          case Result.NonEq => false
+          case Result.IsEq(constr) =>
+            constr.foreach(addConstraint)
+            true
     }
   }
 
